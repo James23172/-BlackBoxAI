@@ -342,7 +342,7 @@ public class BlackboardClient {
         int count = 0;
         try (Jedis jedis = pool.getResource()) {
             // Redis BITCOUNT
-            count = jedis.bitcount(ConfigConstants.KEY_MAP_VIEW).intValue();
+            count = (int) jedis.bitcount(ConfigConstants.KEY_MAP_VIEW);
         }
         return count;
     }
@@ -350,7 +350,7 @@ public class BlackboardClient {
     /** 获取障碍物数量 */
     public int getObstacleCount() {
         try (Jedis jedis = pool.getResource()) {
-            return jedis.bitcount(ConfigConstants.KEY_MAP_BLOCKED).intValue();
+            return (int) jedis.bitcount(ConfigConstants.KEY_MAP_BLOCKED);
         }
     }
 
