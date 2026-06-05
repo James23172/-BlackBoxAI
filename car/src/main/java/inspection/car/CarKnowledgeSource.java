@@ -1,33 +1,39 @@
 package inspection.car;
 
-import inspection.blackboard.RedisBlackboardClient;
-import inspection.messaging.RabbitMQClient;
-import inspection.model.*;
+import com.alibaba.fastjson2.JSON;
+import inspection.common.client.BlackboardClient;
+import inspection.common.client.MessageBusClient;
+import inspection.common.client.DistributedLock;
+import inspection.common.config.ConfigConstants;
+import inspection.common.enums.CarStatus;
+import inspection.common.enums.CommandType;
+import inspection.common.model.MQMessage;
+import inspection.common.model.Point;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.util.concurrent.locks.Lock;
+import java.util.Map;
 
 public class CarKnowledgeSource {
     private static final Logger log = LoggerFactory.getLogger(CarKnowledgeSource.class);
 
     private final String carId;
-    private final RedisBlackboardClient bb;
-    private final RabbitMQClient mq;
+    private final BlackboardClient bb;
+    private final MessageBusClient mq;
     private int currentTick = 0;
 
     public CarKnowledgeSource(String carId) {
         this.carId = carId;
-        this.bb = new RedisBlackboardClient();
-        this.mq = new RabbitMQClient(carId);
+        this.bb = new BlackboardClient(ConfigConstants.REDIS_HOST, ConfigConstants.REDIS_PORT);
+        this.mq = new MessageBusClient();
     }
 
     public void start() {
         try {
-            mq.connect();
             log.info("[Car:{}] Connected to RabbitMQ and Redis", carId);
 
-            mq.startConsuming(this::onMessage);
+            String queueName = ConfigConstants.carQueueName(carId);
+            mq.subscribe(queueName, this::onMessage);
             log.info("[Car:{}] Car knowledge source started, waiting for TICK_MOVE...", carId);
         } catch (Exception e) {
             log.error("[Car:{}] Failed to start: {}", carId, e.getMessage(), e);
@@ -40,10 +46,9 @@ public class CarKnowledgeSource {
         log.info("[Car:{}] Shutdown complete", carId);
     }
 
-    private void onMessage(String text) {
+    private void onMessage(MQMessage msg) {
         try {
-            TickMoveMessage msg = TickMoveMessage.fromJson(text);
-            if (!"TICK_MOVE".equals(msg.getCmd())) {
+            if (!CommandType.TICK_MOVE.name().equals(msg.getCmd())) {
                 log.warn("[Car:{}] Unknown cmd: {}", carId, msg.getCmd());
                 return;
             }
@@ -65,7 +70,7 @@ public class CarKnowledgeSource {
         }
 
         // 2. tryLock — spec: 非阻塞获取锁，失败则跳过本 tick
-        Lock carLock = bb.getCarLock(carId);
+        DistributedLock carLock = bb.getCarLock(carId);
         if (!carLock.tryLock()) {
             log.warn("[Car:{}] Cannot acquire lock, skip tick {}", carId, currentTick);
             return;
@@ -125,7 +130,10 @@ public class CarKnowledgeSource {
             Point stillNext = bb.peekNextStep(carId);
             if (stillNext != null) {
                 bb.setCarStatus(carId, CarStatus.READY);
-                mq.sendToController(CarMessage.buildMoved(carId, actual.getX(), actual.getY(), steps, currentTick).toJson());
+                MQMessage movedMsg = new MQMessage(CommandType.MOVED.name(),
+                        Map.of("carId", carId, "x", actual.getX(), "y", actual.getY(),
+                                "steps", steps, "tick", currentTick));
+                mq.sendToQueue(ConfigConstants.QUEUE_CONTROLLER_CMD, movedMsg);
                 log.info("[Car:{}] Sent MOVED, status set to READY for next step", carId);
             } else {
                 handleRouteDone();
@@ -141,7 +149,9 @@ public class CarKnowledgeSource {
         try {
             bb.setCarStatus(carId, CarStatus.BLOCKED);
             bb.setBlockedTick(carId, tick);
-            mq.sendToController(CarMessage.buildBlocked(carId, tick, tick).toJson());
+            MQMessage blockedMsg = new MQMessage(CommandType.CAR_BLOCKED.name(),
+                    Map.of("carId", carId, "blockedTick", tick, "tick", tick));
+            mq.sendToQueue(ConfigConstants.QUEUE_CONTROLLER_CMD, blockedMsg);
             log.info("[Car:{}] Sent BLOCKED at tick {}", carId, tick);
         } catch (Exception e) {
             log.error("[Car:{}] Error in handleBlocked: {}", carId, e.getMessage(), e);
@@ -153,13 +163,15 @@ public class CarKnowledgeSource {
             bb.setCarStatus(carId, CarStatus.IDLE);
             bb.clearCarTarget(carId);
             bb.clearRoute(carId);
-            mq.sendToController(CarMessage.buildRouteDone(carId, currentTick).toJson());
+            MQMessage doneMsg = new MQMessage(CommandType.ROUTE_DONE.name(),
+                    Map.of("carId", carId, "tick", currentTick));
+            mq.sendToQueue(ConfigConstants.QUEUE_CONTROLLER_CMD, doneMsg);
             log.info("[Car:{}] Sent ROUTE_DONE, status set to IDLE", carId);
         } catch (Exception e) {
             log.error("[Car:{}] Error in handleRouteDone: {}", carId, e.getMessage(), e);
         }
     }
 
-    public RedisBlackboardClient getBb() { return bb; }
-    public RabbitMQClient getMq() { return mq; }
+    public BlackboardClient getBb() { return bb; }
+    public MessageBusClient getMq() { return mq; }
 }
