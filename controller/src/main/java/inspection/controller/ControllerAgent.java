@@ -26,7 +26,7 @@ public class ControllerAgent {
     private final ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor();
     private volatile boolean running = false;
     private long tickCount = 0;
-    private long tickIntervalMs = 500;
+    private final long tickIntervalMs = ConfigConstants.TICK_INTERVAL_MS;
     private final Set<String> pendingTargetRequests = new HashSet<>();
     private final Set<String> pendingRouteRequests = new HashSet<>();
 
@@ -36,9 +36,9 @@ public class ControllerAgent {
     }
 
     public void start() {
-        // 订阅回复队列（假设 MessageBusClient.subscribe 接受队列名和回调）
+        // 使用 subscribeText 接收原始 JSON 字符串（适配 handleReply(String)）
         try {
-            mq.subscribe(ConfigConstants.CONTROLLER_CMD_QUEUE, this::handleReply);
+            mq.subscribeText(ConfigConstants.QUEUE_CONTROLLER_CMD, this::handleReply);
         } catch (Exception e) {
             log.error("订阅队列失败", e);
         }
@@ -63,7 +63,7 @@ public class ControllerAgent {
 
             double explored = getExploredPercent();
             if (explored >= 99.9) {
-                log.info("巡检完成！探索率 = {}%", explored);
+                log.info("🏁 巡检完成！探索率 = {}%", explored);
                 running = false;
                 scheduler.shutdown();
                 return;
@@ -125,12 +125,11 @@ public class ControllerAgent {
         }
     }
 
-    // ========== 兼容性包装方法（适配 common 模块可能缺失的接口） ==========
+    // ========== 临时包装（若 BlackboardClient 缺少方法可暂时这样用）==========
     private double getExploredPercent() {
         try {
             return bb.getExploredPercent();
         } catch (Exception e) {
-            log.warn("getExploredPercent 未实现，返回 0");
             return 0.0;
         }
     }
@@ -139,7 +138,6 @@ public class ControllerAgent {
         try {
             return bb.getAllCarIds();
         } catch (Exception e) {
-            log.warn("getAllCarIds 未实现，使用默认列表");
             return Arrays.asList("Car001", "Car002", "Car003", "Car004", "Car005");
         }
     }
@@ -151,11 +149,12 @@ public class ControllerAgent {
             return "BFS";
         }
     }
+    // ================================================================
 
     private void requestTargetAssignment(String carId) {
         JSONObject data = new JSONObject();
         data.put("carId", carId);
-        sendCommand(ASSIGN_TARGET, data, ConfigConstants.TARGET_PLANNER_CMD_QUEUE);
+        sendCommand(ASSIGN_TARGET, data, ConfigConstants.QUEUE_TARGET_PLANNER_CMD);
     }
 
     private void requestRoutePlan(String carId) {
@@ -163,13 +162,13 @@ public class ControllerAgent {
         JSONObject data = new JSONObject();
         data.put("carId", carId);
         data.put("algorithm", algorithm);
-        sendCommand(PLAN_ROUTE, data, ConfigConstants.NAVIGATOR_CMD_QUEUE);
+        sendCommand(PLAN_ROUTE, data, ConfigConstants.QUEUE_NAVIGATOR_CMD);
     }
 
     private void broadcastTickMove(List<String> carIds) {
         JSONObject data = new JSONObject();
         for (String carId : carIds) {
-            sendCommand(TICK_MOVE, data, ConfigConstants.getCarQueueName(carId));
+            sendCommand(TICK_MOVE, data, ConfigConstants.carQueueName(carId));
         }
         log.debug("已发送 TICK_MOVE 给 {} 辆车", carIds.size());
     }
@@ -177,7 +176,7 @@ public class ControllerAgent {
     private void broadcastViewRefresh() {
         JSONObject data = new JSONObject();
         data.put("tick", tickCount);
-        sendCommand(REFRESH_ALL, data, ConfigConstants.UPDATE_VIEW_EXCHANGE, true);
+        sendCommand(REFRESH_ALL, data, ConfigConstants.EXCHANGE_UPDATE_VIEW, true);
     }
 
     private void handleBlockedTimeout(String carId) {
@@ -188,7 +187,7 @@ public class ControllerAgent {
             blockedTick = 0;
         }
         long diff = tickCount - blockedTick;
-        if (diff >= 2) {
+        if (diff >= ConfigConstants.BLOCKED_TIMEOUT_TICKS) {
             log.info("小车 {} 已阻塞 {} 个节拍，清空路径/目标，转为 IDLE", carId, diff);
             try {
                 bb.clearCarRoute(carId);
@@ -220,7 +219,7 @@ public class ControllerAgent {
                     String movedCar = data.getString("carId");
                     log.debug("小车 {} 移动至 ({},{})", movedCar, data.getInteger("x"), data.getInteger("y"));
                     break;
-                case BLOCKED:
+                case CAR_BLOCKED:          // 枚举中为 CAR_BLOCKED，不是 BLOCKED
                     String blockedCar = data.getString("carId");
                     log.warn("小车 {} 报告受阻", blockedCar);
                     break;
@@ -234,7 +233,9 @@ public class ControllerAgent {
                     forwardToTaskConfigurator(FORWARD_CONFIG, data);
                     break;
                 case RESET:
-                    forwardToTaskConfigurator(FORWARD_RESET, data);
+                    // 枚举中没有 FORWARD_RESET，暂时使用 FORWARD_CONFIG 并在 data 中加 reset 标记
+                    data.put("reset", true);
+                    forwardToTaskConfigurator(FORWARD_CONFIG, data);
                     break;
                 default:
                     log.warn("未处理的消息类型: {}", cmd);
@@ -283,7 +284,7 @@ public class ControllerAgent {
     }
 
     private void forwardToTaskConfigurator(CommandType cmd, JSONObject data) {
-        sendCommand(cmd, data, ConfigConstants.TASK_CONFIG_CMD_QUEUE);
+        sendCommand(cmd, data, ConfigConstants.QUEUE_TASK_CONFIG_CMD);
         log.info("转发命令 {} 到 TaskConfigurator", cmd);
     }
 
