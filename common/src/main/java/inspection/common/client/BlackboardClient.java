@@ -233,6 +233,13 @@ public class BlackboardClient {
         }
     }
 
+    /** Point 版本（队友接口要求） */
+    public void setCarTarget(String carId, Point target) {
+        if (target != null) {
+            setCarTarget(carId, target.getX(), target.getY());
+        }
+    }
+
     public void clearCarTarget(String carId) {
         try (Jedis jedis = pool.getResource()) {
             jedis.del(ConfigConstants.carTargetKey(carId));
@@ -295,6 +302,11 @@ public class BlackboardClient {
         }
     }
 
+    /** 别名：clearCarRoute */
+    public void clearCarRoute(String carId) {
+        clearRoute(carId);
+    }
+
     // ==================== 受阻 ====================
 
     public void setBlockedTick(String carId, long tick) {
@@ -308,6 +320,11 @@ public class BlackboardClient {
             String val = jedis.get(ConfigConstants.carBlockedTickKey(carId));
             return val != null ? Long.parseLong(val) : 0;
         }
+    }
+
+    /** 别名：getCarBlockedTick */
+    public long getCarBlockedTick(String carId) {
+        return getBlockedTick(carId);
     }
 
     // ==================== 全局配置 ====================
@@ -341,10 +358,36 @@ public class BlackboardClient {
     public int getExploredCount() {
         int count = 0;
         try (Jedis jedis = pool.getResource()) {
-            // Redis BITCOUNT
             count = (int) jedis.bitcount(ConfigConstants.KEY_MAP_VIEW);
         }
         return count;
+    }
+
+    /** 获取探索百分比 (0.0 ~ 100.0) */
+    public double getExploredPercent() {
+        int total = mapWidth * mapHeight;
+        if (total == 0) return 0.0;
+        return getExploredCount() * 100.0 / total;
+    }
+
+    /** 获取所有小车 ID 列表 */
+    public List<String> getAllCarIds() {
+        try (Jedis jedis = pool.getResource()) {
+            String carsStr = jedis.hget(ConfigConstants.KEY_TASK_CONFIG, "cars");
+            if (carsStr != null && !carsStr.isEmpty()) {
+                return JSON.parseArray(carsStr, String.class);
+            }
+        }
+        // 默认返回配置中的 Car001
+        return Collections.singletonList(ConfigConstants.CAR_ID);
+    }
+
+    /** 获取路径规划算法名 */
+    public String getRouteAlgorithm() {
+        try (Jedis jedis = pool.getResource()) {
+            String algo = jedis.hget(ConfigConstants.KEY_TASK_CONFIG, "routeAlgorithm");
+            return algo != null ? algo : "BFS";
+        }
     }
 
     /** 获取障碍物数量 */
