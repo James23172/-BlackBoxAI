@@ -92,7 +92,8 @@ public class TaskConfiguratorMain {
         int mapWidth = data.getIntValue("mapWidth", ConfigConstants.DEFAULT_MAP_WIDTH);
         int mapHeight = data.getIntValue("mapHeight", ConfigConstants.DEFAULT_MAP_HEIGHT);
         int carCount = data.getIntValue("carCount", 1);
-        double obstacleDensity = data.getDoubleValue("obstacleDensity", ConfigConstants.DEFAULT_OBSTACLE_DENSITY);
+        Double od = data.getDouble("obstacleDensity");
+        double obstacleDensity = od != null ? od : ConfigConstants.DEFAULT_OBSTACLE_DENSITY;
 
         LOG.info("收到配置: mapWidth={}, mapHeight={}, carCount={}, density={}",
                 mapWidth, mapHeight, carCount, obstacleDensity);
