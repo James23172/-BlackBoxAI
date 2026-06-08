@@ -180,7 +180,7 @@ public class MessageBusClient {
      * @param queueName 队列名
      * @param handler   消息处理回调（接收原始 String）
      */
-    public void subscribeText(String queueName, java.util.function.Consumer<String> handler) {
+    public void subscribeText(String queueName, Consumer<String> handler) {
         try {
             declareQueue(queueName);
             channel.basicQos(1);

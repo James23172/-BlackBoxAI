@@ -76,9 +76,14 @@ public class CommandReceiver extends WebSocketServer {
             } else if ("START".equals(type)) {
                 JSONObject data = new JSONObject();
                 data.put("active", true);
+                data.put("mapWidth", json.getIntValue("mapWidth"));
+                data.put("mapHeight", json.getIntValue("mapHeight"));
+                data.put("carCount", json.getIntValue("carCount"));
+                data.put("obstacleDensity", json.getDoubleValue("obstacleDensity"));
                 MQMessage mqMsg = new MQMessage("SET_CONFIG", data);
                 messageBus.sendToQueue(CONTROLLER_QUEUE, mqMsg);
-                LOG.info("转发 START: active=true");
+                LOG.info("转发 START → ControllerCmd: mapWidth={}, mapHeight={}, carCount={}",
+                        data.get("mapWidth"), data.get("mapHeight"), data.get("carCount"));
 
             } else if ("PAUSE".equals(type)) {
                 JSONObject data = new JSONObject();

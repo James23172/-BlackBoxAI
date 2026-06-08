@@ -5,6 +5,7 @@ import com.alibaba.fastjson2.JSONObject;
 import com.rabbitmq.client.Channel;
 import com.rabbitmq.client.DeliverCallback;
 import inspection.common.client.BlackboardClient;
+import inspection.common.client.DistributedLock;
 import inspection.common.client.MessageBusClient;
 import inspection.common.config.ConfigConstants;
 import inspection.common.model.MQMessage;
@@ -86,7 +87,7 @@ public class NavigatorMain {
             return;
         }
 
-        JSONObject data = (JSONObject) msg.getData();
+        JSONObject data = JSONObject.parseObject(JSON.toJSONString(msg.getData()));
         String carId = data.getString("carId");
         String algorithm = data.getString("algorithm");
 
@@ -107,14 +108,9 @@ public class NavigatorMain {
             return;
         }
 
-        int width = ConfigConstants.DEFAULT_MAP_WIDTH;
-        int height = ConfigConstants.DEFAULT_MAP_HEIGHT;
-        boolean[][] obstacles = new boolean[height][width];
-        for (int y = 0; y < height; y++) {
-            for (int x = 0; x < width; x++) {
-                obstacles[y][x] = blackboard.isBlocked(x, y);
-            }
-        }
+        int width = blackboard.getMapWidth();
+        int height = blackboard.getMapHeight();
+        boolean[][] obstacles = blackboard.getMapBlocked();
 
         PathPlanner planner;
         if ("A_STAR".equals(algorithm)) {
@@ -136,14 +132,15 @@ public class NavigatorMain {
         }
 
         // 加锁写入路径
-        if (blackboard.getCarLock(carId).tryLock()) {
+        DistributedLock carLock = blackboard.getCarLock(carId);
+        if (carLock.tryLock()) {
             try {
                 blackboard.clearRoute(carId);
                 blackboard.pushRoute(carId, path);
                 LOG.info("路径规划成功: carId={}, 步数={}", carId, path.size());
                 sendRoutePlannedResponse(carId, true, path.size());
             } finally {
-                blackboard.getCarLock(carId).unlock();
+                carLock.unlock();
             }
         } else {
             LOG.warn("获取小车 {} 锁失败", carId);

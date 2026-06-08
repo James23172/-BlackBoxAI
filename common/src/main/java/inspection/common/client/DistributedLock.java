@@ -1,6 +1,7 @@
 package inspection.common.client;
 
 import redis.clients.jedis.Jedis;
+import redis.clients.jedis.JedisPool;
 import redis.clients.jedis.params.SetParams;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -11,6 +12,8 @@ import inspection.common.config.ConfigConstants;
  *
  * 使用 SET NX EX 实现，防止死锁
  *
+ * 每次操作从连接池获取/归还连接，避免泄漏。
+ *
  * 用法:
  *   DistributedLock lock = bb.getCarLock("Car001");
  *   if (lock.tryLock()) {
@@ -20,12 +23,12 @@ import inspection.common.config.ConfigConstants;
 public class DistributedLock {
     private static final Logger log = LoggerFactory.getLogger(DistributedLock.class);
 
-    private final Jedis jedis;
+    private final JedisPool pool;
     private final String lockKey;
     private final String lockValue;  // 用于安全释放
 
-    public DistributedLock(Jedis jedis, String lockKey) {
-        this.jedis = jedis;
+    public DistributedLock(JedisPool pool, String lockKey) {
+        this.pool = pool;
         this.lockKey = lockKey;
         this.lockValue = String.valueOf(Thread.currentThread().getId());
     }
@@ -35,17 +38,19 @@ public class DistributedLock {
      * @return true = 获取成功
      */
     public boolean tryLock() {
-        SetParams params = SetParams.setParams()
-                .nx()
-                .ex(ConfigConstants.LOCK_EXPIRE_SECONDS);
-        String result = jedis.set(lockKey, lockValue, params);
-        boolean locked = "OK".equals(result);
-        if (locked) {
-            log.debug("锁获取成功: {}", lockKey);
-        } else {
-            log.debug("锁获取失败（已被占用）: {}", lockKey);
+        try (Jedis jedis = pool.getResource()) {
+            SetParams params = SetParams.setParams()
+                    .nx()
+                    .ex(ConfigConstants.LOCK_EXPIRE_SECONDS);
+            String result = jedis.set(lockKey, lockValue, params);
+            boolean locked = "OK".equals(result);
+            if (locked) {
+                log.debug("锁获取成功: {}", lockKey);
+            } else {
+                log.debug("锁获取失败（已被占用）: {}", lockKey);
+            }
+            return locked;
         }
-        return locked;
     }
 
     /**
@@ -74,7 +79,9 @@ public class DistributedLock {
         // Lua 脚本保证原子性: 只有 value 匹配才删除
         String script = "if redis.call('get', KEYS[1]) == ARGV[1] then " +
                         "return redis.call('del', KEYS[1]) else return 0 end";
-        jedis.eval(script, 1, lockKey, lockValue);
+        try (Jedis jedis = pool.getResource()) {
+            jedis.eval(script, 1, lockKey, lockValue);
+        }
         log.debug("锁已释放: {}", lockKey);
     }
 
@@ -85,7 +92,9 @@ public class DistributedLock {
     public void renew(int seconds) {
         String script = "if redis.call('get', KEYS[1]) == ARGV[1] then " +
                         "return redis.call('expire', KEYS[1], ARGV[2]) else return 0 end";
-        jedis.eval(script, 1, lockKey, lockValue, String.valueOf(seconds));
+        try (Jedis jedis = pool.getResource()) {
+            jedis.eval(script, 1, lockKey, lockValue, String.valueOf(seconds));
+        }
     }
 
     public String getLockKey() { return lockKey; }

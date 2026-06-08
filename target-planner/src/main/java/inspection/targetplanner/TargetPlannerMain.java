@@ -86,18 +86,20 @@ public class TargetPlannerMain {
             return;
         }
 
-        JSONObject data = (JSONObject) msg.getData();
+        JSONObject data = JSONObject.parseObject(JSON.toJSONString(msg.getData()));
         String carId = data.getString("carId");
         LOG.info("收到目标分配请求: carId={}", carId);
 
         int mapWidth = blackboard.getMapWidth();
         int mapHeight = blackboard.getMapHeight();
 
-        // 1. 扫描所有未探索且无障碍的格子
+        // 1. 扫描所有未探索且无障碍的格子（批量获取 bitmap，避免 N² Redis 调用）
+        boolean[][] explored = blackboard.getMapView();
+        boolean[][] blocked = blackboard.getMapBlocked();
         List<Point> unexplored = new ArrayList<>();
         for (int y = 0; y < mapHeight; y++) {
             for (int x = 0; x < mapWidth; x++) {
-                if (!blackboard.isExplored(x, y) && !blackboard.isBlocked(x, y)) {
+                if (!explored[y][x] && !blocked[y][x]) {
                     unexplored.add(new Point(x, y));
                 }
             }

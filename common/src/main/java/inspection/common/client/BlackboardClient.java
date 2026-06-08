@@ -35,8 +35,9 @@ public class BlackboardClient {
     private static final Logger log = LoggerFactory.getLogger(BlackboardClient.class);
 
     private final JedisPool pool;
-    private final int mapWidth;
-    private final int mapHeight;
+    private int mapWidth;
+    private int mapHeight;
+    private long lastConfigRefresh = 0;
 
     public BlackboardClient(String host, int port) {
         this(host, port, ConfigConstants.DEFAULT_MAP_WIDTH, ConfigConstants.DEFAULT_MAP_HEIGHT);
@@ -55,13 +56,35 @@ public class BlackboardClient {
         log.info("BlackboardClient 已连接 Redis {}:{}", host, port);
     }
 
+    /** 从 Redis config:task 刷新地图尺寸（最多每秒一次） */
+    public void refreshMapConfig() {
+        long now = System.currentTimeMillis();
+        if (now - lastConfigRefresh < 1000) return;
+        try (Jedis jedis = pool.getResource()) {
+            String w = jedis.hget(ConfigConstants.KEY_TASK_CONFIG, "mapWidth");
+            String h = jedis.hget(ConfigConstants.KEY_TASK_CONFIG, "mapHeight");
+            if (w != null) mapWidth = Integer.parseInt(w);
+            if (h != null) mapHeight = Integer.parseInt(h);
+        } catch (Exception e) {
+            // config:task may not exist yet, ignore
+        }
+        lastConfigRefresh = now;
+    }
+
+    /** 更新地图尺寸（TaskConfigurator 在 clearAll 后调用） */
+    public void setMapSize(int w, int h) {
+        this.mapWidth = w;
+        this.mapHeight = h;
+        this.lastConfigRefresh = System.currentTimeMillis();
+    }
+
     /** 获取底层 Jedis 连接（供 DistributedLock 等使用） */
     public Jedis getJedis() {
         return pool.getResource();
     }
 
-    public int getMapWidth() { return mapWidth; }
-    public int getMapHeight() { return mapHeight; }
+    public int getMapWidth() { refreshMapConfig(); return mapWidth; }
+    public int getMapHeight() { refreshMapConfig(); return mapHeight; }
 
     // ==================== 地图操作 ====================
 
@@ -70,17 +93,32 @@ public class BlackboardClient {
         return (long) y * mapWidth + x;
     }
 
-    /** 获取整个地图的探索状态（boolean 二维数组） */
-    public boolean[][] getMapView() {
-        boolean[][] view = new boolean[mapHeight][mapWidth];
+    /** 用 GET 一次性获取 bitmap 全部字节，解码为 boolean 二维数组（替代 N² 次 GETBIT） */
+    public boolean[][] getBitmapAsGrid(String key, int width, int height) {
+        boolean[][] grid = new boolean[height][width];
         try (Jedis jedis = pool.getResource()) {
-            for (int y = 0; y < mapHeight; y++) {
-                for (int x = 0; x < mapWidth; x++) {
-                    view[y][x] = jedis.getbit(ConfigConstants.KEY_MAP_VIEW, bitmapOffset(x, y));
+            byte[] data = jedis.get(key.getBytes());
+            if (data == null) return grid;
+            for (int y = 0; y < height; y++) {
+                for (int x = 0; x < width; x++) {
+                    int offset = y * width + x;
+                    int byteIdx = offset / 8;
+                    int bitIdx = offset % 8;
+                    if (byteIdx < data.length) {
+                        grid[y][x] = (data[byteIdx] & (1 << bitIdx)) != 0;
+                    }
                 }
             }
+        } catch (Exception e) {
+            log.warn("getBitmapAsGrid failed", e);
         }
-        return view;
+        return grid;
+    }
+
+    /** 获取整个地图的探索状态（boolean 二维数组） */
+    public boolean[][] getMapView() {
+        refreshMapConfig();
+        return getBitmapAsGrid(ConfigConstants.KEY_MAP_VIEW, mapWidth, mapHeight);
     }
 
     /** 设置地图某位的探索状态 */
@@ -97,19 +135,21 @@ public class BlackboardClient {
         }
     }
 
-    /** 3x3 点亮：以 (cx,cy) 为中心照亮周围 */
+    /** 3x3 点亮：以 (cx,cy) 为中心照亮周围（使用 pipeline 批量提交） */
     public void illuminateArea(int cx, int cy) {
         int r = ConfigConstants.ILLUMINATE_RADIUS;
         try (Jedis jedis = pool.getResource()) {
+            var pipeline = jedis.pipelined();
             for (int dy = -r; dy <= r; dy++) {
                 for (int dx = -r; dx <= r; dx++) {
                     int nx = cx + dx;
                     int ny = cy + dy;
                     if (nx >= 0 && nx < mapWidth && ny >= 0 && ny < mapHeight) {
-                        jedis.setbit(ConfigConstants.KEY_MAP_VIEW, bitmapOffset(nx, ny), true);
+                        pipeline.setbit(ConfigConstants.KEY_MAP_VIEW, bitmapOffset(nx, ny), true);
                     }
                 }
             }
+            pipeline.sync();
         }
     }
 
@@ -117,6 +157,7 @@ public class BlackboardClient {
 
     /** 检查 (x,y) 是否被阻塞（静态障碍物或动态小车） */
     public boolean isBlocked(int x, int y) {
+        refreshMapConfig();
         try (Jedis jedis = pool.getResource()) {
             return jedis.getbit(ConfigConstants.KEY_MAP_BLOCKED, bitmapOffset(x, y));
         }
@@ -124,6 +165,7 @@ public class BlackboardClient {
 
     /** 设置障碍物 */
     public void setBlocked(int x, int y) {
+        refreshMapConfig();
         try (Jedis jedis = pool.getResource()) {
             jedis.setbit(ConfigConstants.KEY_MAP_BLOCKED, bitmapOffset(x, y), true);
         }
@@ -131,6 +173,7 @@ public class BlackboardClient {
 
     /** 清除障碍物 */
     public void clearBlocked(int x, int y) {
+        refreshMapConfig();
         try (Jedis jedis = pool.getResource()) {
             jedis.setbit(ConfigConstants.KEY_MAP_BLOCKED, bitmapOffset(x, y), false);
         }
@@ -138,13 +181,13 @@ public class BlackboardClient {
 
     /** 获取所有障碍物坐标列表 */
     public List<Point> getAllBlocked() {
+        refreshMapConfig();
+        boolean[][] grid = getBitmapAsGrid(ConfigConstants.KEY_MAP_BLOCKED, mapWidth, mapHeight);
         List<Point> list = new ArrayList<>();
-        try (Jedis jedis = pool.getResource()) {
-            for (int y = 0; y < mapHeight; y++) {
-                for (int x = 0; x < mapWidth; x++) {
-                    if (jedis.getbit(ConfigConstants.KEY_MAP_BLOCKED, bitmapOffset(x, y))) {
-                        list.add(new Point(x, y));
-                    }
+        for (int y = 0; y < mapHeight; y++) {
+            for (int x = 0; x < mapWidth; x++) {
+                if (grid[y][x]) {
+                    list.add(new Point(x, y));
                 }
             }
         }
@@ -153,15 +196,8 @@ public class BlackboardClient {
 
     /** 获取地图阻挡状态二维数组（供 Navigator 路径规划使用） */
     public boolean[][] getMapBlocked() {
-        boolean[][] blocked = new boolean[mapHeight][mapWidth];
-        try (Jedis jedis = pool.getResource()) {
-            for (int y = 0; y < mapHeight; y++) {
-                for (int x = 0; x < mapWidth; x++) {
-                    blocked[y][x] = jedis.getbit(ConfigConstants.KEY_MAP_BLOCKED, bitmapOffset(x, y));
-                }
-            }
-        }
-        return blocked;
+        refreshMapConfig();
+        return getBitmapAsGrid(ConfigConstants.KEY_MAP_BLOCKED, mapWidth, mapHeight);
     }
 
     // ==================== 小车状态 ====================
@@ -192,10 +228,8 @@ public class BlackboardClient {
 
     public void setCarPosition(String carId, int x, int y) {
         try (Jedis jedis = pool.getResource()) {
-            Map<String, String> map = new HashMap<>();
-            map.put("x", String.valueOf(x));
-            map.put("y", String.valueOf(y));
-            jedis.hset(ConfigConstants.carPositionKey(carId), map);
+            jedis.hset(ConfigConstants.carPositionKey(carId), "x", String.valueOf(x));
+            jedis.hset(ConfigConstants.carPositionKey(carId), "y", String.valueOf(y));
         }
     }
 
@@ -252,13 +286,12 @@ public class BlackboardClient {
     public void pushRoute(String carId, List<Point> path) {
         try (Jedis jedis = pool.getResource()) {
             String key = ConfigConstants.carRouteKey(carId);
-            // 先清旧路径
             jedis.del(key);
             if (path != null && !path.isEmpty()) {
-                // 逆序压入，保证 RPOP 时按顺序取出
+                // 顺序压入，LPUSH 保证 RPOP 时按序（第一步先出）
                 String[] jsons = new String[path.size()];
-                for (int i = path.size() - 1; i >= 0; i--) {
-                    jsons[path.size() - 1 - i] = JSON.toJSONString(path.get(i));
+                for (int i = 0; i < path.size(); i++) {
+                    jsons[i] = JSON.toJSONString(path.get(i));
                 }
                 jedis.lpush(key, jsons);
             }
@@ -337,7 +370,9 @@ public class BlackboardClient {
 
     public void setTaskConfig(Map<String, String> config) {
         try (Jedis jedis = pool.getResource()) {
-            jedis.hset(ConfigConstants.KEY_TASK_CONFIG, config);
+            for (Map.Entry<String, String> entry : config.entrySet()) {
+                jedis.hset(ConfigConstants.KEY_TASK_CONFIG, entry.getKey(), entry.getValue());
+            }
         }
     }
 
@@ -365,6 +400,7 @@ public class BlackboardClient {
 
     /** 获取探索百分比 (0.0 ~ 100.0) */
     public double getExploredPercent() {
+        refreshMapConfig();
         int total = mapWidth * mapHeight;
         if (total == 0) return 0.0;
         return getExploredCount() * 100.0 / total;
@@ -400,11 +436,11 @@ public class BlackboardClient {
     // ==================== 分布式锁 ====================
 
     public DistributedLock getCarLock(String carId) {
-        return new DistributedLock(getJedis(), ConfigConstants.carLockKey(carId));
+        return new DistributedLock(pool, ConfigConstants.carLockKey(carId));
     }
 
     public DistributedLock getControllerLock() {
-        return new DistributedLock(getJedis(), ConfigConstants.KEY_LOCK_CONTROLLER);
+        return new DistributedLock(pool, ConfigConstants.KEY_LOCK_CONTROLLER);
     }
 
     // ==================== 管理 ====================

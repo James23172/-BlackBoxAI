@@ -3,6 +3,7 @@ package inspection.controller;
 import com.alibaba.fastjson2.JSONArray;
 import com.alibaba.fastjson2.JSONObject;
 import inspection.common.client.BlackboardClient;
+import inspection.common.client.DistributedLock;
 import inspection.common.client.MessageBusClient;
 import inspection.common.config.ConfigConstants;
 import inspection.common.enums.CarStatus;
@@ -93,8 +94,7 @@ public class ControllerAgent {
                     case READY:
                         break;
                     case MOVING:
-                        bb.setCarStatus(carId, CarStatus.READY);
-                        log.warn("小车 {} 状态异常(MOVING)，已重置为 READY", carId);
+                        log.debug("小车 {} 正在移动中", carId);
                         break;
                     case BLOCKED:
                         handleBlockedTimeout(carId);
@@ -189,13 +189,18 @@ public class ControllerAgent {
         long diff = tickCount - blockedTick;
         if (diff >= ConfigConstants.BLOCKED_TIMEOUT_TICKS) {
             log.info("小车 {} 已阻塞 {} 个节拍，清空路径/目标，转为 IDLE", carId, diff);
+            DistributedLock lock = bb.getCarLock(carId);
+            if (!lock.tryLock()) {
+                log.warn("获取小车 {} 锁失败，延迟处理", carId);
+                return;
+            }
             try {
                 bb.clearCarRoute(carId);
                 bb.clearCarTarget(carId);
-            } catch (Exception e) {
-                log.warn("清空路径/目标失败", e);
+                bb.setCarStatus(carId, CarStatus.IDLE);
+            } finally {
+                lock.unlock();
             }
-            bb.setCarStatus(carId, CarStatus.IDLE);
         }
     }
 
@@ -230,7 +235,18 @@ public class ControllerAgent {
                     log.info("小车 {} 已完成路径", doneCar);
                     break;
                 case SET_CONFIG:
-                    forwardToTaskConfigurator(FORWARD_CONFIG, data);
+                    if (data.containsKey("active")) {
+                        boolean active = data.getBooleanValue("active");
+                        if (data.containsKey("mapWidth")) {
+                            // Has full config params — forward to TaskConfigurator for reinit
+                            forwardToTaskConfigurator(FORWARD_CONFIG, data);
+                        } else {
+                            bb.setTaskActive(active);
+                        }
+                        log.info("任务状态已设置为 active={}", active);
+                    } else {
+                        forwardToTaskConfigurator(FORWARD_CONFIG, data);
+                    }
                     break;
                 case RESET:
                     // 枚举中没有 FORWARD_RESET，暂时使用 FORWARD_CONFIG 并在 data 中加 reset 标记

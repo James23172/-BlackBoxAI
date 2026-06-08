@@ -15,8 +15,10 @@ import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Random;
 import java.util.Set;
@@ -87,28 +89,34 @@ public class TaskConfiguratorMain {
             return;
         }
 
-        JSONObject data = (JSONObject) msg.getData();
+        JSONObject data = JSONObject.parseObject(JSON.toJSONString(msg.getData()));
 
         int mapWidth = data.getIntValue("mapWidth", ConfigConstants.DEFAULT_MAP_WIDTH);
         int mapHeight = data.getIntValue("mapHeight", ConfigConstants.DEFAULT_MAP_HEIGHT);
         int carCount = data.getIntValue("carCount", 1);
-        double obstacleDensity = data.getDoubleValue("obstacleDensity", ConfigConstants.DEFAULT_OBSTACLE_DENSITY);
+        Double od = data.getDouble("obstacleDensity");
+        double obstacleDensity = od != null ? od : ConfigConstants.DEFAULT_OBSTACLE_DENSITY;
 
         LOG.info("收到配置: mapWidth={}, mapHeight={}, carCount={}, density={}",
                 mapWidth, mapHeight, carCount, obstacleDensity);
 
         // 1. 清空 Redis
         blackboard.clearAll();
-        LOG.info("Redis 已清空");
+        blackboard.setMapSize(mapWidth, mapHeight);
+        LOG.info("Redis 已清空，地图尺寸: {}x{}", mapWidth, mapHeight);
 
         // 2. 生成随机障碍物
         int obstacleCount = generateObstacles(mapWidth, mapHeight, obstacleDensity, carCount);
 
-        // 3. 初始化所有小车
+        // 3. 初始化所有小车（分散起始位置避免拥堵）
+        int[][] startOffsets = {{0,0}, {2,0}, {0,2}, {-2,0}, {0,-2}};
+        List<String> carIds = new ArrayList<>();
         for (int i = 1; i <= carCount; i++) {
             String carId = String.format("Car%03d", i);
-            int startX = mapWidth / 2;
-            int startY = mapHeight / 2;
+            carIds.add(carId);
+            int[] off = startOffsets[(i - 1) % startOffsets.length];
+            int startX = Math.max(1, Math.min(mapWidth - 2, mapWidth / 2 + off[0]));
+            int startY = Math.max(1, Math.min(mapHeight - 2, mapHeight / 2 + off[1]));
             blackboard.setCarPosition(carId, startX, startY);
             blackboard.setCarStatus(carId, CarStatus.IDLE);
             blackboard.setCarSteps(carId, 0);
@@ -120,8 +128,10 @@ public class TaskConfiguratorMain {
         config.put("mapWidth", String.valueOf(mapWidth));
         config.put("mapHeight", String.valueOf(mapHeight));
         config.put("carCount", String.valueOf(carCount));
+        config.put("cars", JSON.toJSONString(carIds));
         config.put("obstacleDensity", String.valueOf(obstacleDensity));
-        config.put("taskActive", "0");
+        boolean startActive = data.getBooleanValue("active", false);
+        config.put("taskActive", startActive ? "1" : "0");
         blackboard.setTaskConfig(config);
 
         // 5. 声明系统队列和 Exchange

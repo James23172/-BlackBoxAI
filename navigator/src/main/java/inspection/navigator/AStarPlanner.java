@@ -59,6 +59,10 @@ public class AStarPlanner implements PathPlanner {
         while (!openSet.isEmpty()) {
             Node current = openSet.poll();
 
+            if (current.g != bestG.get(current.point)) {
+                continue;
+            }
+
             if (current.point.equals(target)) {
                 return reconstructPath(current);
             }
