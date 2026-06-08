@@ -73,6 +73,11 @@ public final class ConfigConstants {
 
     // ==================== 分布式锁参数 ====================
     public static final int LOCK_EXPIRE_SECONDS = 30;
+
+    /** RabbitMQ 别名常量（兼容队友代码） */
+    public static final String RABBIT_USER  = RABBITMQ_USER;
+    public static final String RABBIT_PASS  = RABBITMQ_PASS;
+    public static final String RABBIT_VHOST = RABBITMQ_VHOST;
     public static final int LOCK_RETRY_INTERVAL_MS = 100;
     public static final int LOCK_MAX_RETRIES = 50;
 

@@ -123,6 +123,13 @@ public class MessageBusClient {
     }
 
     /**
+     * 发送原始 JSON 字符串到指定队列（别名 publish，兼容队友代码）
+     */
+    public void publish(String queueName, String message) {
+        sendRaw(queueName, message);
+    }
+
+    /**
      * 发送原始 JSON 字符串到指定队列
      */
     public void sendRaw(String queueName, String json) {
@@ -133,6 +140,20 @@ public class MessageBusClient {
             log.debug("发送原始 → {}", queueName);
         } catch (IOException e) {
             log.error("发送原始消息失败 → {}: {}", queueName, e.getMessage(), e);
+        }
+    }
+
+    /**
+     * 广播原始字符串到 Fanout Exchange（兼容队友代码）
+     */
+    public void fanoutPublish(String exchangeName, String message) {
+        try {
+            channel.basicPublish(exchangeName, "",
+                    MessageProperties.PERSISTENT_TEXT_PLAIN,
+                    message.getBytes(StandardCharsets.UTF_8));
+            log.debug("Fanout广播 → {}", exchangeName);
+        } catch (IOException e) {
+            log.error("Fanout广播失败 → {}: {}", exchangeName, e.getMessage(), e);
         }
     }
 
@@ -152,6 +173,31 @@ public class MessageBusClient {
     }
 
     // ==================== 消息订阅 ====================
+
+    /**
+     * 订阅指定队列，接收原始 JSON 字符串（兼容队友代码）
+     * 注：Java 泛型擦除限制，不能与 Consumer&lt;MQMessage&gt; 同名，故用 subscribeText
+     * @param queueName 队列名
+     * @param handler   消息处理回调（接收原始 String）
+     */
+    public void subscribeText(String queueName, java.util.function.Consumer<String> handler) {
+        try {
+            declareQueue(queueName);
+            channel.basicQos(1);
+            DeliverCallback deliverCallback = (consumerTag, delivery) -> {
+                String body = new String(delivery.getBody(), StandardCharsets.UTF_8);
+                try {
+                    handler.accept(body);
+                } catch (Exception e) {
+                    log.error("处理消息异常: {}", e.getMessage(), e);
+                }
+            };
+            channel.basicConsume(queueName, true, deliverCallback, consumerTag -> {});
+            log.info("已订阅队列(String): {}", queueName);
+        } catch (IOException e) {
+            log.error("订阅队列失败 → {}: {}", queueName, e.getMessage(), e);
+        }
+    }
 
     /**
      * 订阅指定队列，自动 ACK
