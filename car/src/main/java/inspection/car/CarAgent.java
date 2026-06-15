@@ -69,7 +69,8 @@ public class CarAgent {
 
             bb.setCarPosition(carId, next.x, next.y);
 
-            obstacleManager.setObstacle(next);
+            // 注意: 不把自己的位置设为障碍物，否则会挡住自己回路
+            // obstacleManager.setObstacle(next);  ← 删掉这行！
 
             illuminator.illuminate(next.x, next.y);
 
