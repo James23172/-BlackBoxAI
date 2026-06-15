@@ -212,7 +212,8 @@ public class ControllerAgent {
             CommandType type = CommandType.valueOf(cmd);
             switch (type) {
                 case TASK_READY:
-                    log.info("收到 TASK_READY，仿真任务已就绪");
+                    log.info("收到 TASK_READY，仿真任务已就绪，激活任务");
+                    bb.setTaskActive(true);
                     break;
                 case TARGET_ASSIGNED:
                     handleTargetAssigned(data);

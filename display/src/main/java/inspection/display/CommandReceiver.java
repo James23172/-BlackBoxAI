@@ -49,7 +49,7 @@ public class CommandReceiver extends WebSocketServer {
             String type = json.getString("type");
 
             if ("SET_CONFIG".equals(type)) {
-                // 转发到 ControllerCmd，Controller 的 tick loop 会转发 FORWARD_CONFIG 到 TaskConfigCmd
+                // 转发到 ControllerCmd，Controller 转发 FORWARD_CONFIG 到 TaskConfigCmd
                 JSONObject data = new JSONObject();
                 data.put("mapWidth", json.getIntValue("mapWidth"));
                 data.put("mapHeight", json.getIntValue("mapHeight"));
@@ -74,15 +74,17 @@ public class CommandReceiver extends WebSocketServer {
                         data.get("mapWidth"), data.get("mapHeight"), data.get("carCount"));
 
             } else if ("START".equals(type)) {
+                // 发送 SET_CONFIG 初始化地图 + 激活任务
                 JSONObject data = new JSONObject();
                 data.put("active", true);
                 data.put("mapWidth", json.getIntValue("mapWidth"));
                 data.put("mapHeight", json.getIntValue("mapHeight"));
                 data.put("carCount", json.getIntValue("carCount"));
                 data.put("obstacleDensity", json.getDoubleValue("obstacleDensity"));
+
                 MQMessage mqMsg = new MQMessage("SET_CONFIG", data);
                 messageBus.sendToQueue(CONTROLLER_QUEUE, mqMsg);
-                LOG.info("转发 START → ControllerCmd: mapWidth={}, mapHeight={}, carCount={}",
+                LOG.info("START: 发送 SET_CONFIG → ControllerCmd: mapWidth={}, mapHeight={}, carCount={}",
                         data.get("mapWidth"), data.get("mapHeight"), data.get("carCount"));
 
             } else if ("PAUSE".equals(type)) {
@@ -90,7 +92,7 @@ public class CommandReceiver extends WebSocketServer {
                 data.put("active", false);
                 MQMessage mqMsg = new MQMessage("SET_CONFIG", data);
                 messageBus.sendToQueue(CONTROLLER_QUEUE, mqMsg);
-                LOG.info("转发 PAUSE: active=false");
+                LOG.info("PAUSE: active=false");
 
             } else {
                 LOG.warn("未知浏览器命令: {}", type);
