@@ -11,9 +11,37 @@ import java.util.*;
  */
 public class Launcher {
 
-    private static final String JAVA_HOME = "C:\\workplace\\program\\java\\jdk-17";
-    private static final String JAVA = JAVA_HOME + "\\bin\\java.exe";
-    private static final String PROJECT_ROOT = "C:\\workplace\\ruanti\\BlackBoxAI";
+    // 自动检测 Java 路径（兼容任何电脑）
+    private static final String JAVA = detectJava();
+
+    private static String detectJava() {
+        String jh = System.getProperty("java.home");
+        if (jh != null) {
+            File javaExe = new File(jh, "bin\\java.exe");
+            if (javaExe.exists()) return javaExe.getAbsolutePath();
+        }
+        return "java"; // fallback: 依赖 PATH
+    }
+    // 自动检测项目根目录（从当前 class 路径反推）
+    private static final File PROJECT_ROOT = detectProjectRoot();
+
+    private static File detectProjectRoot() {
+        // 从 common/target/classes/... 往上找 pom.xml
+        try {
+            String clsPath = Launcher.class.getProtectionDomain()
+                    .getCodeSource().getLocation().toURI().getPath();
+            File dir = new File(clsPath);
+            while (dir != null) {
+                if (new File(dir, "pom.xml").exists() 
+                        && new File(dir, "common").isDirectory()) {
+                    return dir;
+                }
+                dir = dir.getParentFile();
+            }
+        } catch (Exception ignored) {}
+        // fallback: 当前工作目录
+        return new File(System.getProperty("user.dir"));
+    }
 
     // Maven 本地仓库
     private static final String M2 = System.getProperty("user.home") + "\\.m2\\repository";
@@ -65,8 +93,8 @@ public class Launcher {
             throws Exception {
         System.out.print("启动 " + name + "... ");
 
-        String classesDir = PROJECT_ROOT + "\\" + module + "\\target\\classes";
-        String commonClasses = PROJECT_ROOT + "\\common\\target\\classes";
+        String classesDir = new File(PROJECT_ROOT, module + "\\target\\classes").getAbsolutePath();
+        String commonClasses = new File(PROJECT_ROOT, "common\\target\\classes").getAbsolutePath();
 
         // 构建 classpath
         String cp = buildClasspath(commonClasses, classesDir);
@@ -76,7 +104,7 @@ public class Launcher {
                 "-cp", cp,
                 mainClass
         );
-        pb.directory(new File(PROJECT_ROOT));
+        pb.directory(PROJECT_ROOT);
         pb.redirectOutput(ProcessBuilder.Redirect.PIPE);
         pb.redirectError(ProcessBuilder.Redirect.PIPE);
 
