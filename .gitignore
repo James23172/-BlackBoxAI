@@ -1,0 +1,11 @@
+# IDEA
+.idea/
+*.iml
+
+# Maven
+target/
+
+# 临时文件
+dump.rdb
+*.exe
+nul
