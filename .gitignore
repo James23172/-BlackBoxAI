@@ -1,11 +1,18 @@
-# IDEA
+target/
 .idea/
 *.iml
+*.iws
+*.ipr
+.mvn/
+!.mvn/wrapper/maven-wrapper.jar
 
-# Maven
-target/
-
-# 临时文件
 dump.rdb
 *.exe
 nul
+.apt_generated
+.classpath
+.factorypath
+.project
+.settings
+.vscode/
+.DS_Store
