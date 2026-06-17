@@ -47,10 +47,14 @@ public class StateBroadcaster {
 
     private void broadcastState() {
         // 1. 读取地图
-        boolean[][] mapView = blackboard.getMapView();
         int mapWidth = blackboard.getMapWidth();
         int mapHeight = blackboard.getMapHeight();
-
+        boolean[][] mapView = new boolean[mapHeight][mapWidth];
+        for (int y = 0; y < mapHeight; y++) {
+            for (int x = 0; x < mapWidth; x++) {
+                mapView[y][x] = blackboard.isExplored(x, y);
+            }
+        }
         // 2. 读取障碍物列表
         List<Point> obstacles = blackboard.getAllBlocked();
 

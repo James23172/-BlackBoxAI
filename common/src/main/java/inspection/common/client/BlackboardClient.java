@@ -98,15 +98,32 @@ public class BlackboardClient {
         boolean[][] grid = new boolean[height][width];
         try (Jedis jedis = pool.getResource()) {
             byte[] data = jedis.get(key.getBytes());
-            if (data == null) return grid;
+            int expectedBytes = (width * height + 7) / 8;
+            if (data == null) {
+                data = new byte[expectedBytes];
+            } else if (data.length < expectedBytes) {
+                byte[] newData = new byte[expectedBytes];
+                System.arraycopy(data, 0, newData, 0, data.length);
+                data = newData;
+            }
+
+            // ===== 新增：调试专用，只打印特定区域（例如 15,15 周围） =====
+            int debugCx = 15, debugCy = 15; // 你可以根据小车位置动态改，或固定写 15,15
+
             for (int y = 0; y < height; y++) {
                 for (int x = 0; x < width; x++) {
                     int offset = y * width + x;
                     int byteIdx = offset / 8;
                     int bitIdx = offset % 8;
+                    // 只针对小车周围 3x3 区域打印
+                    if (x >= debugCx - 1 && x <= debugCx + 1 && y >= debugCy - 1 && y <= debugCy + 1) {
+                        int byteVal = data[byteIdx] & 0xFF;
+                        //log.info("解码: x={}, y={}, offset={}, byteIdx={}, bitIdx={}, byteValue={}, bit={}",x, y, offset, byteIdx, bitIdx, byteVal, (data[byteIdx] & (1 << bitIdx)) != 0);
+                    }
                     if (byteIdx < data.length) {
                         grid[y][x] = (data[byteIdx] & (1 << bitIdx)) != 0;
                     }
+                    // 如果 byteIdx >= data.length，grid 保持 false（但上面已补齐数组，不会发生）
                 }
             }
         } catch (Exception e) {
@@ -137,19 +154,18 @@ public class BlackboardClient {
 
     /** 3x3 点亮：以 (cx,cy) 为中心照亮周围（使用 pipeline 批量提交） */
     public void illuminateArea(int cx, int cy) {
+        refreshMapConfig();
         int r = ConfigConstants.ILLUMINATE_RADIUS;
         try (Jedis jedis = pool.getResource()) {
-            var pipeline = jedis.pipelined();
             for (int dy = -r; dy <= r; dy++) {
                 for (int dx = -r; dx <= r; dx++) {
                     int nx = cx + dx;
                     int ny = cy + dy;
                     if (nx >= 0 && nx < mapWidth && ny >= 0 && ny < mapHeight) {
-                        pipeline.setbit(ConfigConstants.KEY_MAP_VIEW, bitmapOffset(nx, ny), true);
+                        jedis.setbit(ConfigConstants.KEY_MAP_VIEW, bitmapOffset(nx, ny), true);
                     }
                 }
             }
-            pipeline.sync();
         }
     }
 
