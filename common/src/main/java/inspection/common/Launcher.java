@@ -185,7 +185,9 @@ public class Launcher {
         String cp = buildClasspath(commonClassesDir, classesDir, "car");
 
         ProcessBuilder pb = new ProcessBuilder(JAVA,
-                "-Dfile.encoding=UTF-8",           // 解决中文乱码
+                "-Dfile.encoding=UTF-8",           // 统一 JVM 默认编码
+                "-Dsun.stdout.encoding=UTF-8",     // 强制 stdout 使用 UTF-8（Windows 下避免 GBK 乱码）
+                "-Dsun.stderr.encoding=UTF-8",     // 强制 stderr 使用 UTF-8
                 "-cp", cp,
                 "inspection.car.CarMain", carId);
         pb.directory(PROJECT_ROOT);
@@ -200,7 +202,9 @@ public class Launcher {
 
     private static Process startProcess(String name, String mainClass, String cp) throws Exception {
         ProcessBuilder pb = new ProcessBuilder(JAVA,
-                "-Dfile.encoding=UTF-8",           // 解决中文乱码
+                "-Dfile.encoding=UTF-8",           // 统一 JVM 默认编码
+                "-Dsun.stdout.encoding=UTF-8",     // 强制 stdout 使用 UTF-8（Windows 下避免 GBK 乱码）
+                "-Dsun.stderr.encoding=UTF-8",     // 强制 stderr 使用 UTF-8
                 "-cp", cp, mainClass);
         pb.directory(PROJECT_ROOT);
         pb.redirectOutput(ProcessBuilder.Redirect.PIPE);

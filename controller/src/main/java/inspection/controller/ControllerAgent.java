@@ -161,6 +161,13 @@ public class ControllerAgent {
                 requestNavigate(carId);
                 break;
 
+            case "MOVE_READY":
+                log.info("🚗 [MOVE_READY] 发 MOVE_STEP → Car:{}, carId={}", carId);
+                JSONObject moveData = new JSONObject();
+                moveData.put("carId", carId);
+                sendCommand(CommandType.MOVE_STEP, moveData, ConfigConstants.carQueueName(carId));
+                break;
+
             case "BLOCKED":
                 handleBlockedTimeout(carId);
                 break;

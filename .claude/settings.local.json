@@ -23,7 +23,8 @@
       "Bash(export JAVA_HOME=\"C:/Program Files/BellSoft/LibericaJDK-21\")",
       "Bash(\"/c/Program Files/JetBrains/IntelliJ IDEA 2026.1.2/plugins/maven/lib/maven3/bin/mvn\" clean compile -f \"/f/软件体系结构/6.5/pom.xml\" -q)",
       "Bash(ssh -T -p 443 git@ssh.github.com)",
-      "Bash([ -f \"$HOME/.ssh/config\" ])"
+      "Bash([ -f \"$HOME/.ssh/config\" ])",
+      "Bash(mvn compile *)"
     ]
   }
 }
