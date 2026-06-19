@@ -1,0 +1,854 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>多机器人协作巡检仿真系统</title>
+    <style>
+        /* ==================== DESIGN TOKENS ==================== */
+        :root {
+            --bg-primary: #0b1120;
+            --bg-surface: #151d30;
+            --bg-elevated: #1c2740;
+            --bg-input: #0f1729;
+            --text-primary: #e2e8f0;
+            --text-secondary: #94a3b8;
+            --text-muted: #64748b;
+            --accent: #38bdf8;
+            --accent-glow: rgba(56, 189, 248, 0.20);
+            --success: #34d399;
+            --warning: #fbbf24;
+            --danger: #f87171;
+            --border: #1e293b;
+            --border-light: #263348;
+            --radius-sm: 6px;
+            --radius-md: 10px;
+            --radius-lg: 14px;
+            --radius-full: 9999px;
+            --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.35);
+            --shadow-md: 0 4px 14px rgba(0, 0, 0, 0.45);
+            --shadow-lg: 0 8px 28px rgba(0, 0, 0, 0.55);
+            --shadow-glow: 0 0 18px var(--accent-glow);
+            --transition: 0.2s ease;
+            --font-mono: 'JetBrains Mono', 'Cascadia Code', 'Consolas', monospace;
+        }
+
+        /* ==================== RESET & BASE ==================== */
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: 'Inter', 'Segoe UI', 'Microsoft YaHei', system-ui, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            min-height: 100vh;
+            padding: 28px 24px;
+            line-height: 1.5;
+            -webkit-font-smoothing: antialiased;
+        }
+
+        /* ==================== HEADER ==================== */
+        .header {
+            text-align: center;
+            margin-bottom: 24px;
+            padding-bottom: 20px;
+            border-bottom: 1px solid var(--border);
+        }
+        .header h1 {
+            font-size: 26px;
+            font-weight: 700;
+            letter-spacing: -0.3px;
+            background: linear-gradient(135deg, var(--accent) 0%, #818cf8 50%, #c084fc 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            margin-bottom: 10px;
+        }
+        .connection-status {
+            font-size: 11px;
+            font-weight: 600;
+            letter-spacing: 0.5px;
+            text-transform: uppercase;
+            padding: 5px 14px;
+            border-radius: var(--radius-full);
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            transition: all var(--transition);
+        }
+        .connection-status::before {
+            content: '';
+            width: 7px;
+            height: 7px;
+            border-radius: 50%;
+            background: currentColor;
+            flex-shrink: 0;
+        }
+        .connected {
+            background: rgba(52, 211, 153, 0.12);
+            color: var(--success);
+            border: 1px solid rgba(52, 211, 153, 0.3);
+        }
+        .disconnected {
+            background: rgba(248, 113, 113, 0.12);
+            color: var(--danger);
+            border: 1px solid rgba(248, 113, 113, 0.3);
+            animation: pulse-disconnected 2s ease-in-out infinite;
+        }
+        @keyframes pulse-disconnected {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.6; }
+        }
+
+        /* ==================== MAIN LAYOUT ==================== */
+        .main-container {
+            display: flex;
+            gap: 24px;
+            justify-content: center;
+            align-items: flex-start;
+            flex-wrap: wrap;
+            max-width: 1100px;
+            margin: 0 auto;
+        }
+
+        /* ==================== CANVAS AREA ==================== */
+        .canvas-wrapper {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            flex: 1 1 auto;
+            min-width: 0;
+        }
+        #gridCanvas {
+            border: 1px solid var(--border-light);
+            border-radius: var(--radius-md);
+            background: #0d1520;
+            image-rendering: auto;
+            cursor: crosshair;
+            box-shadow: var(--shadow-md), 0 0 0 1px rgba(56, 189, 248, 0.08);
+            transition: box-shadow var(--transition);
+            max-width: 100%;
+            height: auto;
+        }
+        #gridCanvas:hover {
+            box-shadow: var(--shadow-lg), 0 0 0 1px rgba(56, 189, 248, 0.15);
+        }
+
+        .control-panel {
+            background: var(--bg-surface);
+            padding: 22px;
+            border-radius: var(--radius-lg);
+            width: 300px;
+            flex-shrink: 0;
+            border: 1px solid var(--border);
+            box-shadow: var(--shadow-md);
+        }
+        .control-panel h3 {
+            margin: 0 0 18px 0;
+            font-size: 16px;
+            font-weight: 700;
+            letter-spacing: -0.2px;
+            color: var(--text-primary);
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .control-panel h3::before {
+            content: '';
+            display: inline-block;
+            width: 3px;
+            height: 18px;
+            border-radius: 2px;
+            background: var(--accent);
+        }
+
+        /* Form controls */
+        .control-group {
+            margin-bottom: 14px;
+        }
+        .control-group label {
+            display: block;
+            margin-bottom: 5px;
+            color: var(--text-secondary);
+            font-size: 12px;
+            font-weight: 500;
+        }
+        .control-group input,
+        .control-group select {
+            width: 100%;
+            padding: 9px 12px;
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            background: var(--bg-input);
+            color: var(--text-primary);
+            font-size: 13px;
+            font-family: inherit;
+            transition: all var(--transition);
+            outline: none;
+        }
+        .control-group input:focus,
+        .control-group select:focus {
+            border-color: var(--accent);
+            box-shadow: 0 0 0 3px var(--accent-glow);
+        }
+        .control-group select {
+            cursor: pointer;
+            appearance: none;
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+            background-repeat: no-repeat;
+            background-position: right 12px center;
+            padding-right: 36px;
+        }
+        .control-group select option {
+            background: var(--bg-surface);
+            color: var(--text-primary);
+        }
+
+        /* Buttons */
+        .btn-group {
+            display: flex;
+            gap: 8px;
+            margin: 18px 0;
+        }
+        .btn {
+            flex: 1;
+            padding: 10px 0;
+            border: none;
+            border-radius: var(--radius-sm);
+            cursor: pointer;
+            font-size: 13px;
+            font-weight: 600;
+            color: white;
+            transition: all var(--transition);
+            letter-spacing: 0.2px;
+            position: relative;
+            overflow: hidden;
+        }
+        .btn:disabled {
+            opacity: 0.35;
+            cursor: not-allowed;
+            filter: grayscale(30%);
+        }
+        .btn:not(:disabled):hover { transform: translateY(-1px); box-shadow: var(--shadow-md); }
+        .btn:not(:disabled):active { transform: translateY(0); }
+        .btn-start { background: linear-gradient(135deg, #059669, #34d399); }
+        .btn-pause { background: linear-gradient(135deg, #d97706, #fbbf24); }
+        .btn-reset { background: linear-gradient(135deg, #dc2626, #f87171); }
+
+        /* Toggle */
+        .toggle-group {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 10px;
+            padding: 10px 0;
+            border-top: 1px solid var(--border);
+            border-bottom: 1px solid var(--border);
+        }
+        .toggle-group span {
+            font-size: 13px;
+            color: var(--text-secondary);
+            font-weight: 500;
+        }
+        .toggle-switch {
+            position: relative;
+            width: 46px;
+            height: 26px;
+        }
+        .toggle-switch input { opacity: 0; width: 0; height: 0; }
+        .toggle-slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: var(--bg-input);
+            border-radius: 26px;
+            border: 1px solid var(--border);
+            transition: all 0.3s ease;
+        }
+        .toggle-slider:before {
+            position: absolute;
+            content: "";
+            height: 18px;
+            width: 18px;
+            left: 3px;
+            bottom: 3px;
+            background: var(--text-secondary);
+            border-radius: 50%;
+            transition: all 0.3s ease;
+        }
+        input:checked + .toggle-slider {
+            background: var(--accent);
+            border-color: var(--accent);
+        }
+        input:checked + .toggle-slider:before {
+            background: white;
+            transform: translateX(20px);
+        }
+        .selected-car-info {
+            font-size: 12px;
+            color: var(--text-muted);
+            margin-top: 6px;
+            min-height: 18px;
+            font-style: italic;
+            transition: color var(--transition);
+        }
+
+        /* Stats cards */
+        .stats {
+            margin-top: 14px;
+            padding-top: 14px;
+            border-top: 1px solid var(--border);
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+        .stat {
+            font-size: 13px;
+            padding: 8px 10px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background: var(--bg-input);
+            border-radius: var(--radius-sm);
+            border: 1px solid transparent;
+            transition: all var(--transition);
+        }
+        .stat:hover {
+            border-color: var(--border);
+            background: var(--bg-elevated);
+        }
+        .stat-label {
+            color: var(--text-muted);
+            font-size: 12px;
+            font-weight: 500;
+        }
+        .stat-value {
+            color: var(--accent);
+            font-weight: 700;
+            font-family: var(--font-mono);
+            font-size: 13px;
+        }
+
+        /* Completed badge */
+        .completed-badge {
+            display: none;
+            text-align: center;
+            margin-top: 14px;
+            padding: 10px;
+            background: linear-gradient(135deg, #059669, #34d399);
+            border-radius: var(--radius-sm);
+            font-weight: 700;
+            color: white;
+            letter-spacing: 0.3px;
+            box-shadow: 0 0 20px rgba(52, 211, 153, 0.35);
+        }
+        .completed-badge.show {
+            display: block;
+            animation: badge-pop 0.4s ease-out;
+        }
+        @keyframes badge-pop {
+            0% { transform: scale(0.9); opacity: 0; }
+            60% { transform: scale(1.04); }
+            100% { transform: scale(1); opacity: 1; }
+        }
+
+        /* Legend */
+        .legend {
+            margin-top: 14px;
+            padding-top: 14px;
+            border-top: 1px solid var(--border);
+        }
+        .legend h4 {
+            font-size: 12px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: var(--text-muted);
+            margin-bottom: 10px;
+        }
+        .legend-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 6px 12px;
+        }
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 12px;
+            color: var(--text-secondary);
+        }
+        .legend-color {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            flex-shrink: 0;
+            box-shadow: 0 0 6px currentColor;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>Multi-Robot Collaborative Inspection</h1>
+        <span id="connStatus" class="connection-status disconnected">Disconnected</span>
+    </div>
+
+    <div class="main-container">
+        <div class="canvas-wrapper">
+            <canvas id="gridCanvas" width="600" height="600"></canvas>
+        </div>
+
+        <div class="control-panel">
+            <h3>Control Panel</h3>
+
+            <div class="control-group">
+                <label>Map Width</label>
+                <input type="number" id="mapWidth" value="30" min="10" max="80">
+            </div>
+            <div class="control-group">
+                <label>Map Height</label>
+                <input type="number" id="mapHeight" value="30" min="10" max="80">
+            </div>
+            <div class="control-group">
+                <label>Car Count</label>
+                <input type="number" id="carCount" value="4" min="1" max="4">
+            </div>
+            <div class="control-group">
+                <label>Obstacle Density (0.0 ~ 1.0)</label>
+                <input type="number" id="obstacleDensity" value="0.1" min="0" max="1" step="0.05">
+            </div>
+            <div class="control-group" style="display:none">
+                <label>Route Algorithm</label>
+                <select id="routeAlgorithm">
+                    <option value="BFS">BFS (加权贪心)</option>
+                </select>
+            </div>
+
+            <!-- 路由显示开关 -->
+            <div class="toggle-group">
+                <span>Route Display</span>
+                <label class="toggle-switch">
+                    <input type="checkbox" id="routeToggle" onchange="toggleRouteDisplay()">
+                    <span class="toggle-slider"></span>
+                </label>
+            </div>
+            <div class="selected-car-info" id="selectedCarInfo">Click car on map to view route</div>
+
+            <div class="btn-group">
+                <button class="btn btn-start" id="btnApplyCfg" onclick="sendCommand('SET_CONFIG')" style="background: linear-gradient(135deg, #2563eb, #60a5fa);">Apply Config</button>
+            </div>
+            <div class="btn-group">
+                <button class="btn btn-start" id="btnStart" onclick="sendCommand('START')">Start</button>
+                <button class="btn btn-pause" id="btnPause" onclick="sendCommand('PAUSE')">Pause</button>
+                <button class="btn btn-reset" id="btnReset" onclick="sendCommand('RESET')">Reset</button>
+            </div>
+
+            <div class="stats">
+                <div class="stat">
+                    <span class="stat-label">Exploration Rate</span>
+                    <span class="stat-value" id="exploreRate">0.00%</span>
+                </div>
+                <div class="stat">
+                    <span class="stat-label">Task Status</span>
+                    <span class="stat-value" id="taskStatus">Inactive</span>
+                </div>
+                <div class="stat" id="carStatusRow">
+                    <span class="stat-label">Car Status</span>
+                    <span class="stat-value" id="carStatus">-</span>
+                </div>
+                <div class="stat" id="carStepsRow">
+                    <span class="stat-label">Car Steps</span>
+                    <span class="stat-value" id="carSteps">0</span>
+                </div>
+                <div class="stat" id="carPosRow">
+                    <span class="stat-label">Car Position</span>
+                    <span class="stat-value" id="carPos">-</span>
+                </div>
+            </div>
+
+            <div class="completed-badge" id="completedBadge">Inspection Complete!</div>
+
+            <div class="legend">
+                <h4>Legend</h4>
+                <div class="legend-grid">
+                    <div class="legend-item">
+                        <div class="legend-color" style="background:#1a2436;"></div>Unexplored
+                    </div>
+                    <div class="legend-item">
+                        <div class="legend-color" style="background:#1e4d3a;"></div>Explored
+                    </div>
+                    <div class="legend-item">
+                        <div class="legend-color" style="background:#5c3d2e;"></div>Obstacle
+                    </div>
+                    <div class="legend-item">
+                        <div class="legend-color" style="background:#2196F3;"></div>IDLE
+                    </div>
+                    <div class="legend-item">
+                        <div class="legend-color" style="background:#8BC34A;"></div>MOVING
+                    </div>
+                    <div class="legend-item">
+                        <div class="legend-color" style="background:#F44336;"></div>BLOCKED
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+    // ==================== 常量 ====================
+    var WS_URL = 'ws://localhost:8887';
+    var CELL_SIZE = 20;
+    var CAR_STATUS_COLORS = {
+        'IDLE': '#2196F3',
+        'MOVING': '#8BC34A',
+        'BLOCKED': '#F44336'
+    };
+    var UNEXPLORED_COLOR = '#1a2436';
+    var EXPLORED_COLOR = '#1e4d3a';
+    var OBSTACLE_COLOR = '#5c3d2e';
+    var ROUTE_COLOR = '#f59e0b';  // 路由显示颜色 (amber)
+
+    // ==================== 状态 ====================
+    var ws = null;
+    var currentState = null;
+    var selectedCarId = null;       // 当前选中查看路由的车
+    var routeDisplay = false;       // 路由显示开关
+    var routeData = null;           // {carId, route: [{x,y},...]}
+
+    // ==================== WebSocket ====================
+    function connectWebSocket() {
+        if (ws && ws.readyState === WebSocket.OPEN) return;
+
+        ws = new WebSocket(WS_URL);
+
+        ws.onopen = function() {
+            console.log('WebSocket connected');
+            var el = document.getElementById('connStatus');
+            el.textContent = 'Connected';
+            el.className = 'connection-status connected';
+        };
+
+        ws.onclose = function() {
+            console.log('WebSocket disconnected');
+            var el = document.getElementById('connStatus');
+            el.textContent = 'Disconnected';
+            el.className = 'connection-status disconnected';
+            setTimeout(connectWebSocket, 3000);
+        };
+
+        ws.onerror = function(err) {
+            console.error('WebSocket error:', err);
+        };
+
+        ws.onmessage = function(event) {
+            try {
+                var msg = JSON.parse(event.data);
+
+                // ROUTE_DATA: 只更新路由数据，不要覆盖 currentState
+                if (msg.type === 'ROUTE_DATA') {
+                    routeData = msg;
+                    console.log('Received route data:', msg);
+                    if (currentState) render(currentState);
+                    return;
+                }
+
+                // ROUTE_HIDE: 清除路由数据
+                if (msg.type === 'ROUTE_HIDE') {
+                    routeData = null;
+                    if (currentState) render(currentState);
+                    return;
+                }
+
+                // 实时状态更新 (来自 StateBroadcaster 的 SimulationState)
+                currentState = msg;
+                render(msg);
+            } catch (e) {
+                console.error('Failed to process message:', e);
+            }
+        };
+    }
+
+    function toggleRouteDisplay() {
+        routeDisplay = document.getElementById('routeToggle').checked;
+        if (routeDisplay && selectedCarId) {
+            requestRoute(selectedCarId);
+        } else if (!routeDisplay) {
+            ws.send(JSON.stringify({ type: 'ROUTE_HIDE' }));
+        }
+    }
+
+    function requestRoute(carId) {
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: 'ROUTE_DISPLAY', carId: carId }));
+        }
+    }
+
+    // Canvas 点击事件：检测是否点击了小车
+    document.getElementById('gridCanvas').addEventListener('click', function(e) {
+        if (!currentState) return;
+
+        var canvas = document.getElementById('gridCanvas');
+        var rect = canvas.getBoundingClientRect();
+        var mx = e.clientX - rect.left;
+        var my = e.clientY - rect.top;
+
+        // 计算 cell 大小
+        var mapView = currentState.mapView || [];
+        var rows = mapView.length;
+        var cols = rows > 0 ? mapView[0].length : 30;
+        var cellSize = CELL_SIZE;
+        if (cols > 40 || rows > 40) {
+            cellSize = Math.floor(Math.min(600, Math.max(canvas.width, canvas.height)) / Math.max(cols, rows));
+        }
+        // 使用实际 canvas 尺寸的 cellSize
+        var actualCellSize = canvas.width / cols;
+
+        // 检查是否点击了某辆车
+        var cars = currentState.cars || [];
+        for (var i = 0; i < cars.length; i++) {
+            var car = cars[i];
+            if (!car.position) continue;
+            var cx = car.position.x * actualCellSize + actualCellSize / 2;
+            var cy = car.position.y * actualCellSize + actualCellSize / 2;
+            var radius = Math.max(actualCellSize / 2 - 2, 4) + 4; // 点击容差
+            var dx = mx - cx;
+            var dy = my - cy;
+            if (dx * dx + dy * dy <= radius * radius) {
+                selectedCarId = car.carId;
+                document.getElementById('selectedCarInfo').textContent = 'Selected: ' + car.carId;
+                if (routeDisplay) {
+                    requestRoute(car.carId);
+                }
+                return;
+            }
+        }
+
+        // 点击空白 → 取消选中
+        selectedCarId = null;
+        routeData = null;
+        document.getElementById('selectedCarInfo').textContent = 'Click car on map to view route';
+        if (routeDisplay) {
+            ws.send(JSON.stringify({ type: 'ROUTE_HIDE' }));
+        }
+    });
+
+    // ==================== 渲染 ====================
+    function render(state) {
+        if (!state) return;
+
+        var canvas = document.getElementById('gridCanvas');
+        var ctx = canvas.getContext('2d');
+        var mapView = state.mapView || [];
+        var rows = mapView.length;
+        var cols = rows > 0 ? mapView[0].length : 30;
+
+        // 动态调整 cell size
+        var cellSize = CELL_SIZE;
+        if (cols > 40 || rows > 40) {
+            cellSize = Math.floor(600 / Math.max(cols, rows));
+        }
+
+        var canvasW = cols * cellSize;
+        var canvasH = rows * cellSize;
+        canvas.width = canvasW;
+        canvas.height = canvasH;
+
+        ctx.clearRect(0, 0, canvasW, canvasH);
+
+        // 构建障碍物集合
+        var obstacles = {};
+        (state.obstacles || []).forEach(function(p) {
+            obstacles[p.x + ',' + p.y] = true;
+        });
+
+        // 渲染网格
+        for (var y = 0; y < rows; y++) {
+            for (var x = 0; x < cols; x++) {
+                var key = x + ',' + y;
+                if (obstacles[key]) {
+                    ctx.fillStyle = OBSTACLE_COLOR;
+                } else if (mapView[y] && mapView[y][x]) {
+                    ctx.fillStyle = EXPLORED_COLOR;
+                } else {
+                    ctx.fillStyle = UNEXPLORED_COLOR;
+                }
+                ctx.fillRect(x * cellSize, y * cellSize, cellSize - 1, cellSize - 1);
+            }
+        }
+
+        // 渲染路由显示（在车辆下方绘制）
+        if (routeDisplay && routeData && routeData.route && routeData.route.length > 1) {
+            ctx.beginPath();
+            ctx.strokeStyle = ROUTE_COLOR;
+            ctx.lineWidth = Math.max(2, cellSize / 4);
+            ctx.globalAlpha = 0.7;
+            for (var ri = 0; ri < routeData.route.length - 1; ri++) {
+                var r1 = routeData.route[ri];
+                var r2 = routeData.route[ri + 1];
+                ctx.moveTo(r1.x * cellSize + cellSize / 2, r1.y * cellSize + cellSize / 2);
+                ctx.lineTo(r2.x * cellSize + cellSize / 2, r2.y * cellSize + cellSize / 2);
+            }
+            ctx.stroke();
+            ctx.globalAlpha = 1.0;
+
+            // 路由节点小圆点
+            for (var ri = 0; ri < routeData.route.length; ri++) {
+                var rp = routeData.route[ri];
+                ctx.beginPath();
+                ctx.arc(rp.x * cellSize + cellSize / 2, rp.y * cellSize + cellSize / 2,
+                        Math.max(2, cellSize / 8), 0, 2 * Math.PI);
+                ctx.fillStyle = ROUTE_COLOR;
+                ctx.globalAlpha = 0.6;
+                ctx.fill();
+                ctx.globalAlpha = 1.0;
+            }
+        }
+
+        // 渲染小车
+        (state.cars || []).forEach(function(car) {
+            if (car.position) {
+                var cx = car.position.x * cellSize + cellSize / 2;
+                var cy = car.position.y * cellSize + cellSize / 2;
+                var radius = Math.max(cellSize / 2 - 2, 4);
+                var color = CAR_STATUS_COLORS[car.status] || '#FFF';
+
+                // 选中高亮环
+                if (selectedCarId === car.carId) {
+                    ctx.beginPath();
+                    ctx.arc(cx, cy, radius + 4, 0, 2 * Math.PI);
+                    ctx.strokeStyle = '#f59e0b';
+                    ctx.lineWidth = 2;
+                    ctx.globalAlpha = 0.8;
+                    ctx.stroke();
+                    ctx.globalAlpha = 1.0;
+                }
+
+                // 目标指示器
+                if (car.target && car.target.x >= 0 && car.target.y >= 0) {
+                    var tx = car.target.x * cellSize + cellSize / 2;
+                    var ty = car.target.y * cellSize + cellSize / 2;
+                    ctx.beginPath();
+                    ctx.setLineDash([3, 3]);
+                    ctx.moveTo(cx, cy);
+                    ctx.lineTo(tx, ty);
+                    ctx.strokeStyle = color;
+                    ctx.globalAlpha = 0.4;
+                    ctx.lineWidth = 1;
+                    ctx.stroke();
+                    ctx.setLineDash([]);
+                    ctx.globalAlpha = 1.0;
+
+                    // 目标点小圆
+                    ctx.beginPath();
+                    ctx.arc(tx, ty, 3, 0, 2 * Math.PI);
+                    ctx.fillStyle = color;
+                    ctx.globalAlpha = 0.6;
+                    ctx.fill();
+                    ctx.globalAlpha = 1.0;
+                }
+
+                // 小车位置圆
+                ctx.beginPath();
+                ctx.arc(cx, cy, radius, 0, 2 * Math.PI);
+                ctx.fillStyle = color;
+                ctx.fill();
+                ctx.strokeStyle = '#FFF';
+                ctx.lineWidth = 2;
+                ctx.stroke();
+
+                // 小车编号
+                ctx.fillStyle = '#FFF';
+                ctx.font = (cellSize * 0.5) + 'px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(car.carId ? car.carId.slice(-1) : '1', cx, cy);
+            }
+        });
+
+        // 渲染网格线
+        ctx.strokeStyle = 'rgba(255,255,255,0.04)';
+        ctx.lineWidth = 0.5;
+        for (var gx = 0; gx <= cols; gx++) {
+            ctx.beginPath();
+            ctx.moveTo(gx * cellSize, 0);
+            ctx.lineTo(gx * cellSize, rows * cellSize);
+            ctx.stroke();
+        }
+        for (var gy = 0; gy <= rows; gy++) {
+            ctx.beginPath();
+            ctx.moveTo(0, gy * cellSize);
+            ctx.lineTo(cols * cellSize, gy * cellSize);
+            ctx.stroke();
+        }
+
+        // 更新统计信息
+        var rate = (state.exploredRate * 100).toFixed(2);
+        document.getElementById('exploreRate').textContent = rate + '%';
+        document.getElementById('taskStatus').textContent = state.taskActive ? 'Active' : 'Inactive';
+
+        var carList = state.cars || [];
+        if (carList.length > 0) {
+            var car = carList[0];
+            document.getElementById('carStatus').textContent = car.status || '-';
+            document.getElementById('carSteps').textContent = car.steps || 0;
+            if (car.position) {
+                document.getElementById('carPos').textContent = '(' + car.position.x + ', ' + car.position.y + ')';
+            }
+        }
+
+        // 完成标记
+        var badge = document.getElementById('completedBadge');
+        if (state.completed) {
+            badge.className = 'completed-badge show';
+        } else {
+            badge.className = 'completed-badge';
+        }
+
+        // 按钮状态
+        document.getElementById('btnStart').disabled = state.taskActive;
+        document.getElementById('btnPause').disabled = !state.taskActive;
+    }
+
+    // ==================== 命令发送 ====================
+    var _startDebounce = false;
+    function sendCommand(type) {
+        if (!ws || ws.readyState !== WebSocket.OPEN) {
+            alert('WebSocket not connected!');
+            return;
+        }
+
+        // START 防抖：避免多个 WebSocket 连接重复发送
+        if (type === 'START') {
+            if (_startDebounce) { console.log('START debounced'); return; }
+            _startDebounce = true;
+            setTimeout(function() { _startDebounce = false; }, 2000);
+        }
+
+        var msg = { type: type };
+
+        if (type === 'SET_CONFIG' || type === 'RESET') {
+            msg.mapWidth = parseInt(document.getElementById('mapWidth').value) || 30;
+            msg.mapHeight = parseInt(document.getElementById('mapHeight').value) || 30;
+            msg.carCount = parseInt(document.getElementById('carCount').value) || 4;
+            msg.obstacleDensity = parseFloat(document.getElementById('obstacleDensity').value) || 0.1;
+            msg.routeAlgorithm = document.getElementById('routeAlgorithm').value || 'BFS';
+        }
+
+        ws.send(JSON.stringify(msg));
+        console.log('Sent:', msg);
+    }
+
+    // ==================== 初始化 ====================
+    connectWebSocket();
+
+    // 初始渲染空地图（状态到达后自动替换）
+    var canvas = document.getElementById('gridCanvas');
+    var ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#0d1520';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = '#64748b';
+    ctx.font = '16px Inter, Segoe UI, Microsoft YaHei, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('Connecting...', 300, 300);
+    </script>
+</body>
+</html>

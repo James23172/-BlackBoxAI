@@ -1,0 +1,29 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ssh-keygen *)",
+      "Bash(cmd.exe /c start \"\" \"F:\\\\软件体系结构\\\\6.5\\\\FastGithub\\\\FastGithub.UI\\\\bin\\\\Release\\\\net45\\\\win-x64\\\\FastGithub.UI.exe\")",
+      "Bash(curl -s --connect-timeout 5 http://127.0.0.1:38457)",
+      "Bash(git remote *)",
+      "Bash(winget *)",
+      "Bash(choco *)",
+      "Bash(powershell *)",
+      "Bash(git *)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:15672)",
+      "Bash(ipconfig)",
+      "Bash(curl -s -u blackbox:blackbox123 http://localhost:15672/api/users/blackbox)",
+      "Bash(curl *)",
+      "Bash(redis-cli DEL lock:controller)",
+      "Bash(redis-cli -h localhost DEL lock:controller)",
+      "Bash(C:/Program Files/Redis/redis-cli.exe DEL *)",
+      "Bash(mvn clean *)",
+      "Bash(where mvn *)",
+      "Read(//c/Program Files/**)",
+      "Read(//c/Users/wangwuguang/**)",
+      "Bash(export JAVA_HOME=\"C:/Program Files/BellSoft/LibericaJDK-21\")",
+      "Bash(\"/c/Program Files/JetBrains/IntelliJ IDEA 2026.1.2/plugins/maven/lib/maven3/bin/mvn\" clean compile -f \"/f/软件体系结构/6.5/pom.xml\" -q)",
+      "Bash(ssh -T -p 443 git@ssh.github.com)",
+      "Bash([ -f \"$HOME/.ssh/config\" ])"
+    ]
+  }
+}
