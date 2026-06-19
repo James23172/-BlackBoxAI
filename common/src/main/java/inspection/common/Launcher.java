@@ -106,7 +106,8 @@ public class Launcher {
         launchWithArgs("Display", "display",
                 "inspection.display.DisplayMain", commonClasses, 3000,
                 "--http-port", String.valueOf(displayHttpPort),
-                "--car-count", String.valueOf(carCount));
+                "--car-count", String.valueOf(carCount),
+                "--machine", "主");
 
         // 启动 Controller（支持多实例）
         for (int i = 0; i < controllerInstances; i++) {

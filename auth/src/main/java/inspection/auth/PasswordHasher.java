@@ -7,6 +7,11 @@ import java.util.Base64;
 public class PasswordHasher {
     private static final SecureRandom RANDOM = new SecureRandom();
 
+    /**
+     * 两层 SHA-256 存储哈希
+     * @param password 前端 SHA-256 后传输的 transHash（非明文密码）
+     * @return "salt:hash" 格式字符串，其中 hash = SHA-256(salt + transHash)
+     */
     public static String hash(String password) {
         byte[] salt = new byte[16];
         RANDOM.nextBytes(salt);
