@@ -182,6 +182,16 @@ public class ControllerAgent {
                 break;
 
             case "MOVE_READY":
+                // ── 暂停检查 ──
+                if (bb.isGlobalPaused()) {
+                    log.debug("全局暂停中，跳过 carId={}", carId);
+                    break;
+                }
+                String owner = bb.getCarOwner(carId);
+                if (owner != null && !owner.isEmpty() && bb.isOperatorPaused(owner)) {
+                    log.debug("运行员 {} 暂停中，跳过 carId={}", owner, carId);
+                    break;
+                }
                 log.info("🚗 [MOVE_READY] 发 MOVE_STEP → Car:{}, carId={}", carId);
                 JSONObject moveData = new JSONObject();
                 moveData.put("carId", carId);
@@ -237,9 +247,10 @@ public class ControllerAgent {
     }
 
     private void handlePauseTask() {
+        // 全局暂停由 CommandReceiver 通过 BlackboardClient.setGlobalPause(true) 直接操作 Redis
+        // ControllerAgent 只需更新本地 taskActive 以阻止任务处理循环
         log.info("⏸ Pause: 停用任务处理器");
         userActivated = false;
-        bb.setTaskActive(false);
         taskActive = false;
     }
 
@@ -293,7 +304,10 @@ public class ControllerAgent {
                 }
                 fallbackBlockedCheck();
                 // 每 tick 主动推进所有 IDLE 且有路径的小车（每个 tick 最多 1 步）
-                tickDriveCars();
+                // 全局暂停时跳过 tickDrive，但仍继续广播（让 Display 看到暂停状态）
+                if (!bb.isGlobalPaused()) {
+                    tickDriveCars();
+                }
                 tickCount++;
                 // 快照录制（用于回放）
                 saveSnapshotIfRecording();
@@ -354,11 +368,22 @@ public class ControllerAgent {
 
     /** 每个 tick 推进所有 IDLE 且有剩余路径的小车（每车每 tick 最多 1 步） */
     private void tickDriveCars() {
+        // 全局暂停检查
+        boolean globalPaused = bb.isGlobalPaused();
+
         List<String> carIds = getAllCarIds();
         for (String carId : carIds) {
             if (!isMyCar(carIds, carId)) continue;
             try {
                 if (bb.getCarStatus(carId) != CarStatus.IDLE) continue;
+
+                // ── 暂停检查 ──
+                if (globalPaused) continue;
+                String owner = bb.getCarOwner(carId);
+                if (owner != null && !owner.isEmpty() && bb.isOperatorPaused(owner)) {
+                    continue;  // 该运行员暂停了自己的车
+                }
+
                 Point next = bb.peekNextStep(carId);
                 if (next == null) continue;
                 log.debug("tickDrive: carId={}, next=({},{})", carId, next.x, next.y);
