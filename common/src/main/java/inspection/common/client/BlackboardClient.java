@@ -734,6 +734,53 @@ public class BlackboardClient {
         }
     }
 
+    // ==================== 多机归属与暂停 ====================
+
+    public void setCarOwner(String carId, String machineId) {
+        try (Jedis jedis = pool.getResource()) {
+            jedis.set("car:" + carId + ":owner", machineId);
+        }
+    }
+
+    public String getCarOwner(String carId) {
+        try (Jedis jedis = pool.getResource()) {
+            return jedis.get("car:" + carId + ":owner");
+        }
+    }
+
+    public void setGlobalPause(boolean paused) {
+        try (Jedis jedis = pool.getResource()) {
+            if (paused) {
+                jedis.set("pause:global", "true");
+            } else {
+                jedis.del("pause:global");
+            }
+        }
+    }
+
+    public boolean isGlobalPaused() {
+        try (Jedis jedis = pool.getResource()) {
+            return jedis.exists("pause:global");
+        }
+    }
+
+    public void setOperatorPause(String machineId, boolean paused) {
+        try (Jedis jedis = pool.getResource()) {
+            String key = "pause:operator:" + machineId;
+            if (paused) {
+                jedis.set(key, "true");
+            } else {
+                jedis.del(key);
+            }
+        }
+    }
+
+    public boolean isOperatorPaused(String machineId) {
+        try (Jedis jedis = pool.getResource()) {
+            return jedis.exists("pause:operator:" + machineId);
+        }
+    }
+
     /** 关闭连接池 */
     public void close() {
         if (pool != null && !pool.isClosed()) {
