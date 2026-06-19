@@ -21,8 +21,8 @@ public class CarMain {
                 case "--car-id": carId = args[++i]; break;
                 case "--redis-host": redisHost = args[++i]; break;
                 case "--redis-port": redisPort = Integer.parseInt(args[++i]); break;
-                case "--rabbit-host": rabbitHost = args[++i]; break;
-                case "--rabbit-port": rabbitPort = Integer.parseInt(args[++i]); break;
+                case "--mq-host": rabbitHost = args[++i]; break;
+                case "--mq-port": rabbitPort = Integer.parseInt(args[++i]); break;
             }
         }
         if (carId == null || carId.isEmpty()) carId = ConfigConstants.CAR_ID;

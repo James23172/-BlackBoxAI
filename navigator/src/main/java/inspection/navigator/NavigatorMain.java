@@ -7,6 +7,7 @@ import com.rabbitmq.client.DeliverCallback;
 import inspection.common.client.BlackboardClient;
 import inspection.common.client.DistributedLock;
 import inspection.common.client.MessageBusClient;
+import inspection.common.config.ArgsParser;
 import inspection.common.config.ConfigConstants;
 import inspection.common.enums.CarStatus;
 import inspection.common.model.MQMessage;
@@ -63,18 +64,19 @@ public class NavigatorMain {
     private final PathPlanner astarPlanner = new AStarPlanner();
 
     public static void main(String[] args) throws Exception {
-        new NavigatorMain().start();
+        new NavigatorMain().start(args);
     }
 
-    public void start() throws Exception {
-        blackboard = new BlackboardClient(ConfigConstants.REDIS_HOST, ConfigConstants.REDIS_PORT);
+    public void start(String[] args) throws Exception {
+        ArgsParser argsParser = new ArgsParser(args);
+        String redisHost = argsParser.get("--redis-host", ConfigConstants.REDIS_HOST);
+        int redisPort = argsParser.getInt("--redis-port", ConfigConstants.REDIS_PORT);
+        String mqHost = argsParser.get("--mq-host", ConfigConstants.RABBITMQ_HOST);
+        int mqPort = argsParser.getInt("--mq-port", ConfigConstants.RABBITMQ_PORT);
 
-        String rabbitHost = ConfigConstants.RABBITMQ_HOST;
-        int rabbitPort = ConfigConstants.RABBITMQ_PORT;
-        String rabbitUser = getConfigOrDefault("RABBIT_USER", "guest");
-        String rabbitPass = getConfigOrDefault("RABBIT_PASS", "guest");
-        String rabbitVhost = getConfigOrDefault("RABBIT_VHOST", "/");
-        messageBus = new MessageBusClient(rabbitHost, rabbitPort, rabbitUser, rabbitPass, rabbitVhost);
+        blackboard = new BlackboardClient(redisHost, redisPort);
+        messageBus = new MessageBusClient(mqHost, mqPort,
+                ConfigConstants.RABBITMQ_USER, ConfigConstants.RABBITMQ_PASS, ConfigConstants.RABBITMQ_VHOST);
 
         String navQueue = ConfigConstants.QUEUE_NAVIGATOR_4_CAR_ID;
         Channel channel = messageBus.getChannel();
