@@ -62,6 +62,7 @@ private final Map<WebSocket, ConnState> connStates = new ConcurrentHashMap<>();
 static class ConnState {
     String username;
     String role;
+    String machineId;  // 从 Display 的 --machine 参数获取（主/B/C/D/E）
 }
 
 // onOpen: 注册连接（初始未认证）
@@ -80,7 +81,7 @@ onMessage(WebSocket conn, String message):
             conn.close(4001, "请先认证");
             return;
         }
-        handleAuth(conn, msg);  // 校验 token → 写入 connStates
+        handleAuth(conn, msg);  // 校验 token → 写入 connStates (含 machineId)
         return;
     }
     // 后续消息正常处理
@@ -88,7 +89,7 @@ onMessage(WebSocket conn, String message):
 
 **Token 验证方式：** CommandReceiver 收到 AUTH 消息后，向 AuthServer 的 `/api/auth/verify?token=xxx` 发 HTTP GET 请求。AuthServer 可能在其他机器上，因此 Display 需要知道 AuthServer 地址（见 1.6）。
 
-**前端：** `ws.onopen` 时立即发送 `{type: "AUTH", token: getToken()}`。
+**前端：** `ws.onopen` 时立即发送 `{type: "AUTH", token: getToken()}`。服务端 AUTH 成功后回复 `{type: "AUTH_OK", machine: "B"}`，前端存入 `MACHINE_ID`。此后所有 `ADD_CAR` / `PAUSE scope=personal` 的命令自动带 `machine` 字段。
 
 ### 1.4 后端权限校验
 
@@ -182,8 +183,8 @@ java inspection.display.DisplayMain --redis-host 192.168.1.100 --mq-host 192.168
 
 ### 2.2 运行员面板
 
-- "我的小车"表格：筛选 `carOwner === username` 的 Car
-- "暂停我的车""恢复我的车"按钮，命令带 `scope: "personal"`
+- "我的小车"表格：筛选 `carOwner === MACHINE_ID` 的 Car（`MACHINE_ID` 从 `/api/config` 获取，值为主/B/C/D/E）
+- "暂停我的车""恢复我的车"按钮，命令带 `scope: "personal"`（由 `MACHINE_ID` 标识操作对象）
 - 配置员全局暂停时显示红色警告 + 所有按钮变灰
 - 权限说明灰色小字
 
@@ -199,8 +200,8 @@ java inspection.display.DisplayMain --redis-host 192.168.1.100 --mq-host 192.168
 
 ```
 pause:global                  String  "true" / 不存在
-pause:operator:{username}     String  "true" / 不存在
-car:{carId}:owner             String  username
+pause:operator:{machineId}    String  "true" / 不存在   (machineId = 主/B/C/D/E)
+car:{carId}:owner             String  machineId (主/B/C/D/E)
 ```
 
 ### 3.2 Controller 调度逻辑
@@ -211,9 +212,9 @@ car:{carId}:owner             String  username
 每 tick:
   1. 检查 pause:global 是否存在 → 存在则全部跳过
   2. 遍历所有车:
-     ├─ 读 car:{id}:owner
-     ├─ 读 pause:operator:{owner}
-     ├─ 该 owner 暂停 → 跳过这辆车
+     ├─ 读 car:{id}:owner → 得到 machineId（如 "B"）
+     ├─ 读 pause:operator:{machineId}
+     ├─ 该 machineId 暂停 → 跳过这辆车
      └─ 未暂停 → 正常发 MOVE_STEP
   3. 广播 REFRESH_ALL
 ```
@@ -226,27 +227,27 @@ car:{carId}:owner             String  username
 
 ```json
 {type: "PAUSE", scope: "global"}     // 仅 configurator
-{type: "PAUSE", scope: "personal"}   // operator 作用自己
+{type: "PAUSE", scope: "personal"}   // operator，后端从 connStates 取 machineId
 {type: "START", scope: "global"}     // 仅 configurator
-{type: "START", scope: "personal"}   // operator，前提 pause:global 不存在
+{type: "START", scope: "personal"}   // operator，同上取 machineId，前提 pause:global 不存在
 ```
 
 ### 3.4 Car 创建写入 owner
 
 **文件：** `task-configurator` `TaskConfiguratorMain.java`
 
-- 初始化（RESET）：Car owner 留空
-- 增量添加（ADD_CAR）：`blackboard.setCarOwner(carId, data.getString("owner"))`
+- 初始化（RESET）：Car owner 留空（属于"系统"，配置员全局控制）
+- 增量添加（ADD_CAR）：`blackboard.setCarOwner(carId, data.getString("machine"))` — 该值由前端从 `MACHINE_ID` （AUTH_OK 返回）自动填入
 
 ### 3.5 BlackboardClient 新增方法
 
 ```java
-void setCarOwner(String carId, String owner);
+void setCarOwner(String carId, String machineId);
 String getCarOwner(String carId);
 void setGlobalPause(boolean paused);
 boolean isGlobalPaused();
-void setOperatorPause(String username, boolean paused);
-boolean isOperatorPaused(String username);
+void setOperatorPause(String machineId, boolean paused);
+boolean isOperatorPaused(String machineId);
 ```
 
 ---
