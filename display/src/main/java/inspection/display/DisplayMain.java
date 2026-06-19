@@ -30,6 +30,7 @@ public class DisplayMain {
 
         // 解析命令行参数
         String machineId = "主";
+        String authHost = "localhost";
         for (int i = 0; i < args.length; i++) {
             if ("--port".equals(args[i]) && i + 1 < args.length) {
                 wsPort = Integer.parseInt(args[i + 1]);
@@ -42,10 +43,14 @@ public class DisplayMain {
                 carCount = Integer.parseInt(args[i + 1]);
             } else if ("--machine".equals(args[i]) && i + 1 < args.length) {
                 machineId = args[i + 1];
+            } else if ("--auth-host".equals(args[i]) && i + 1 < args.length) {
+                authHost = args[i + 1];
+            } else if ("--auth-port".equals(args[i]) && i + 1 < args.length) {
+                System.setProperty("auth.port", args[i + 1]);
             }
         }
 
-        System.setProperty("auth.host", "localhost");
+        System.setProperty("auth.host", authHost);
         System.setProperty("auth.port", "8890");
 
         LOG.info("Display 模块启动中...");
