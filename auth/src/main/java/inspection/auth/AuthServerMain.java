@@ -9,6 +9,7 @@ import inspection.auth.model.Role;
 import inspection.auth.model.User;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import redis.clients.jedis.Jedis;
 import redis.clients.jedis.JedisPool;
 
 import javax.crypto.Mac;
@@ -43,6 +44,11 @@ public class AuthServerMain {
         pool = new JedisPool("localhost", 6379);
         users = new UserManager(pool);
         perms = new PermissionManager(pool);
+
+        // 清除旧格式哈希（salt+SHA-256(明文) → 改为 salt+SHA-256(SHA-256(明文))）
+        try (Jedis jedis = pool.getResource()) {
+            jedis.del("auth:user:admin");
+        } catch (Exception ignored) {}
 
         // 确保默认管理员存在（带重试，防止AuthServer先于Redis启动）
         for (int i = 0; i < 5; i++) {
@@ -93,11 +99,11 @@ public class AuthServerMain {
                 JSONObject body = JSON.parseObject(
                     new String(ex.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
                 String username = body.getString("username");
-                String password = body.getString("password");
+                String password = body.getString("transHash");
                 String roleStr = body.getString("role");
                 Role role = Role.fromString(roleStr);
                 if (username == null || password == null || role == null) {
-                    send(ex, 400, error("参数不完整（需要 username, password, role）")); return;
+                    send(ex, 400, error("参数不完整（需要 username, transHash, role）")); return;
                 }
                 if (username.length() < 2 || password.length() < 3) {
                     send(ex, 400, error("用户名至少2位，密码至少3位")); return;
@@ -125,9 +131,9 @@ public class AuthServerMain {
                 JSONObject body = JSON.parseObject(
                     new String(ex.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
                 String username = body.getString("username");
-                String password = body.getString("password");
+                String password = body.getString("transHash");
                 if (username == null || password == null) {
-                    send(ex, 400, error("请输入用户名和密码")); return;
+                    send(ex, 400, error("请输入用户名和 transHash")); return;
                 }
 
                 // ── 兜底自愈：admin 不存在时现场创建 ──
@@ -141,6 +147,18 @@ public class AuthServerMain {
                 user = users.login(username, password);
                 if (user == null) {
                     send(ex, 401, error("用户名或密码错误")); return;
+                }
+
+                // 配置员仅限本机登录
+                if (user.getRole() == Role.CONFIGURATOR) {
+                    String ip = ex.getRemoteAddress().getAddress().getHostAddress();
+                    boolean isLocal = "127.0.0.1".equals(ip)
+                                   || "0:0:0:0:0:0:0:1".equals(ip)
+                                   || "::1".equals(ip);
+                    if (!isLocal) {
+                        send(ex, 403, error("配置员仅限主公机本机登录"));
+                        return;
+                    }
                 }
 
                 String token = createToken(user.getUsername(), user.getRole().getRoleName());
