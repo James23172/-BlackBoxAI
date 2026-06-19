@@ -13,6 +13,7 @@ public class CarState {
     public Point target;
     public int steps;
     public long blockedTick;
+    public String owner;                        // 归属 machineId (主/B/C/D/E)
 
     public CarState() {}
 
@@ -37,6 +38,9 @@ public class CarState {
 
     public long getBlockedTick() { return blockedTick; }
     public void setBlockedTick(long blockedTick) { this.blockedTick = blockedTick; }
+
+    public String getOwner() { return owner; }
+    public void setOwner(String owner) { this.owner = owner; }
 
     @Override
     public String toString() {

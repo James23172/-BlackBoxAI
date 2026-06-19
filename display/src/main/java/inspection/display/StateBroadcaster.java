@@ -73,6 +73,7 @@ public class StateBroadcaster {
             cs.setTarget(blackboard.getCarTarget(carId));
             cs.setSteps(blackboard.getCarSteps(carId));
             cs.setBlockedTick(blackboard.getBlockedTick(carId));
+            cs.setOwner(blackboard.getCarOwner(carId));
             carStates.add(cs);
         }
 
@@ -92,6 +93,7 @@ public class StateBroadcaster {
         state.setExploredRate(exploredRate);
         state.setTaskActive(blackboard.isTaskActive());
         state.setTick(0);
+        state.setGlobalPaused(blackboard.isGlobalPaused());
         state.setCompleted(exploredRate >= 0.999);
         return state;
     }
