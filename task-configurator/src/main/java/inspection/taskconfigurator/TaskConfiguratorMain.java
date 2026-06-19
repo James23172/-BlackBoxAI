@@ -98,6 +98,10 @@ public class TaskConfiguratorMain {
             int cy = data.getIntValue("y", ConfigConstants.DEFAULT_MAP_HEIGHT / 2);
             if (carId != null && !carId.isEmpty()) {
                 blackboard.addCar(carId, cx, cy);
+                String machine = data.getString("machine");
+                if (machine != null && !machine.isEmpty()) {
+                    blackboard.setCarOwner(carId, machine);
+                }
                 try { messageBus.getChannel().queueDeclare(
                         ConfigConstants.carQueueName(carId), true, false, false, null);
                 } catch (IOException e) { LOG.error("声明 {} 队列失败", carId, e); }
