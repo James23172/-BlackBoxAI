@@ -322,16 +322,21 @@ function buildPanel(role) {
             section('图例',[legendHtml()]);
     } else if (role === 'operator') {
         p.innerHTML =
-            section('任务控制',[
-                '<div class="btn-row"><button class="btn btn-start" id="btnStart" onclick="sendCmd(\'START\')">▶ 开始</button><button class="btn btn-pause" id="btnPause" onclick="sendCmd(\'PAUSE\')">⏸ 暂停</button></div>'
+            '<div id="globalPauseBanner" style="display:none;text-align:center;padding:8px;background:rgba(248,113,113,.12);color:var(--red);border-radius:8px;margin-bottom:10px;font-weight:700;font-size:13px">⏸ 配置员已全局暂停 — 所有操作已锁定</div>' +
+            section('我的控制',[
+                '<div class="btn-row"><button class="btn btn-start" id="btnMyStart" onclick="sendCmd(\'START\',\'personal\')">▶ 恢复我的车</button><button class="btn btn-pause" id="btnMyPause" onclick="sendCmd(\'PAUSE\',\'personal\')">⏸ 暂停我的车</button></div>',
+                '<button class="btn btn-full" onclick="addMyCar()" style="margin-top:8px;background:linear-gradient(135deg,#7c3aed,#a78bfa)">➕ 添加我的新车</button>',
+                '<div style="font-size:10px;color:var(--text3);margin-top:8px">你只能控制自己的小车。配置员全局暂停时所有操作锁定。</div>'
             ]) +
             section('运行状态',[
-                '<div style="display:flex;justify-content:space-between;margin-bottom:4px"><span style="font-size:11px;color:var(--text3);font-weight:600">探索率</span><span id="taskStatus" class="task-inactive">未激活</span></div>',
+                '<div style="display:flex;justify-content:space-between;margin-bottom:4px"><span style="font-size:11px;color:var(--text3);font-weight:600">全局探索率</span><span id="taskStatus" class="task-inactive">未激活</span></div>',
                 '<div style="display:flex;align-items:center;gap:12px;margin-bottom:10px"><div class="explore-bar-outer"><div class="explore-bar-inner" id="exploreBar" style="width:0%"></div></div><span class="explore-value" id="exploreRate">0.0%</span></div>',
-                carTable(4),
+                '<div style="font-size:11px;color:var(--text2);margin-bottom:6px;font-weight:600">🚗 我的小车（机器：<span id="myMachineLabel"></span>）</div>',
+                '<table class="car-table"><thead><tr><th>小车</th><th>状态</th><th>位置</th><th>步数</th></tr></thead><tbody id="carTableBody"><tr><td colspan="4" style="text-align:center;color:var(--text3);padding:12px">等待数据...</td></tr></tbody></table>',
                 '<div class="completed-badge" id="completedBadge">🎉 巡检完成！</div>'
             ]) +
             section('图例',[legendHtml()]);
+        document.getElementById('myMachineLabel').textContent = MACHINE_ID;
     } else if (role === 'analyst') {
         p.innerHTML =
             section('回放',[
@@ -452,6 +457,12 @@ function addCar() {
     var n = 1; while(used['Car'+String(n).padStart(3,'0')]) n++;
     ws.send(JSON.stringify({type:'ADD_CAR', carId:'Car'+String(n).padStart(3,'0'), x:Math.floor(Math.random()*30)+5, y:Math.floor(Math.random()*30)+5}));
 }
+function addMyCar() {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    var n = 1;
+    ws.send(JSON.stringify({type:'ADD_CAR', machine: MACHINE_ID,
+        x: Math.floor(Math.random()*30)+5, y: Math.floor(Math.random()*30)+5}));
+}
 function removeCar(id) { if(confirm('确认移除 '+id+'?')) ws.send(JSON.stringify({type:'REMOVE_CAR',carId:id})); }
 function selectCarFromTable(id) { selectedCarId = id; render(currentState); }
 
@@ -533,6 +544,11 @@ function render(state) {
     var tbody = document.getElementById('carTableBody');
     if (tbody) {
         var carList = state.cars||[];
+        if (getRole() === 'operator') {
+            carList = carList.filter(function(c) {
+                return c.owner === MACHINE_ID;
+            });
+        }
         var existing = {}; tbody.querySelectorAll('tr[data-car-id]').forEach(function(r){existing[r.getAttribute('data-car-id')]=r});
         var colCount = getRole() === 'configurator' ? 5 : 4;
         if (carList.length === 0) {
@@ -568,6 +584,18 @@ function render(state) {
     var badge = document.getElementById('completedBadge'); if(badge) badge.className = state.completed ? 'completed-badge show' : 'completed-badge';
     var bs=document.getElementById('btnStart'), bp=document.getElementById('btnPause');
     if(bs) bs.disabled=state.taskActive; if(bp) bp.disabled=!state.taskActive;
+
+    // 运行员模式下按钮状态
+    var bms = document.getElementById('btnMyStart'), bmp = document.getElementById('btnMyPause');
+    if (bms && bmp) {
+        var globalPaused = state.globalPaused;
+        bms.disabled = globalPaused;
+        bmp.disabled = globalPaused;
+        var banner = document.getElementById('globalPauseBanner');
+        if (banner) {
+            banner.style.display = globalPaused ? '' : 'none';
+        }
+    }
 
     // 全局暂停横幅（仅配置员可见）
     var pauseBanner = document.getElementById('globalPauseBanner');
