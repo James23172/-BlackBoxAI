@@ -17,6 +17,7 @@ import java.net.InetSocketAddress;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
@@ -36,6 +37,25 @@ public class CommandReceiver extends WebSocketServer {
 
     public void setMachineId(String machineId) {
         this.machineId = machineId;
+    }
+
+    // 内联权限常量（与 auth/PermissionManager.DEFAULT_PERMISSIONS 保持同步）
+    private static final Set<String> CONFIG_ONLY = Set.of("SET_CONFIG", "RESET", "TOGGLE_OBSTACLE", "RECORD_START", "RECORD_STOP");
+    private static final Set<String> CONFIG_OR_OP = Set.of("START", "PAUSE", "ADD_CAR", "REMOVE_CAR");
+
+    private boolean checkPermission(WebSocket conn, String action) {
+        ConnState state = connStates.get(conn);
+        if (state == null || state.role == null) return false;
+        String role = state.role;
+        if ("configurator".equals(role)) return true;  // 配置员所有权限
+        if ("operator".equals(role)) {
+            if (CONFIG_OR_OP.contains(action)) return true;
+        }
+        // analyst 只能查看
+        try {
+            conn.send("{\"type\":\"ERROR\",\"message\":\"权限不足\"}");
+        } catch (Exception e) { /* ignore */ }
+        return false;
     }
 
     static class ConnState {
@@ -93,6 +113,16 @@ public class CommandReceiver extends WebSocketServer {
                 }
                 handleAuth(conn, json);
                 return;
+            }
+
+            // ── 权限校验（AUTH 通过后） ──
+            // 以下命令需要特定角色
+            if ("SET_CONFIG".equals(type) || "RESET".equals(type) || "TOGGLE_OBSTACLE".equals(type)
+                    || "RECORD_START".equals(type) || "RECORD_STOP".equals(type)) {
+                if (!checkPermission(conn, type)) return;
+            }
+            if ("START".equals(type) || "PAUSE".equals(type) || "ADD_CAR".equals(type) || "REMOVE_CAR".equals(type)) {
+                if (!checkPermission(conn, type)) return;
             }
 
             switch (type) {
