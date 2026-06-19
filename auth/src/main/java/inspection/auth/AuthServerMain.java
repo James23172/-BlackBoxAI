@@ -51,9 +51,12 @@ public class AuthServerMain {
         users = new UserManager(pool);
         perms = new PermissionManager(pool);
 
-        // 清除旧格式哈希（salt+SHA-256(明文) → 改为 salt+SHA-256(SHA-256(明文))）
+        // 仅在首次迁移时清除旧格式哈希（避免每次重启重置 admin 密码）
         try (Jedis jedis = pool.getResource()) {
-            jedis.del("auth:user:admin");
+            if (!jedis.exists("auth:migrated")) {
+                jedis.del("auth:user:admin");
+                jedis.set("auth:migrated", "1");
+            }
         } catch (Exception ignored) {}
 
         // 确保默认管理员存在（带重试，防止AuthServer先于Redis启动）

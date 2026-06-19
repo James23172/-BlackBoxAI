@@ -248,8 +248,8 @@ public class CommandReceiver extends WebSocketServer {
         int x = json.getIntValue("x", 15);
         int y = json.getIntValue("y", 15);
 
-        // 写入 car owner
-        String machine = json.getString("machine");
+        // 写入 car owner（使用服务端记录的 machineId，不信任客户端）
+        String machine = state != null ? state.machineId : null;
         if (machine != null && !machine.isEmpty()) {
             blackboard.setCarOwner(carId, machine);
         }

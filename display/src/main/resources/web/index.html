@@ -477,9 +477,11 @@ function addCar() {
 }
 function addMyCar() {
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
-    var n = 1;
-    ws.send(JSON.stringify({type:'ADD_CAR', machine: MACHINE_ID,
-        x: Math.floor(Math.random()*30)+5, y: Math.floor(Math.random()*30)+5}));
+    var cars = (currentState&&currentState.cars)||[];
+    var used = {}; cars.forEach(function(c){used[c.carId]=true});
+    var n = 1; while(used['Car'+String(n).padStart(3,'0')]) n++;
+    ws.send(JSON.stringify({type:'ADD_CAR', carId:'Car'+String(n).padStart(3,'0'),
+        machine: MACHINE_ID, x: Math.floor(Math.random()*30)+5, y: Math.floor(Math.random()*30)+5}));
 }
 function removeCar(id) { if(confirm('确认移除 '+id+'?')) ws.send(JSON.stringify({type:'REMOVE_CAR',carId:id})); }
 function selectCarFromTable(id) { selectedCarId = id; render(currentState); }
