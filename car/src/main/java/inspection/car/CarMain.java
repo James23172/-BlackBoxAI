@@ -32,7 +32,7 @@ public class CarMain {
                 String cmd = message.getCmd();
                 log.debug("[Car:{}] 收到命令: {}", carId, cmd);
 
-                if (CommandType.TICK_MOVE.name().equals(cmd)) {
+                if (CommandType.MOVE_STEP.name().equals(cmd)) {
                     long tick = tickCounter.incrementAndGet();
                     agent.handleTickMove(tick);
                 } else {

@@ -31,7 +31,6 @@ import java.util.Set;
 public class TaskConfiguratorMain {
     private static final Logger LOG = LoggerFactory.getLogger(TaskConfiguratorMain.class);
     private static final String TASK_CONFIG_QUEUE = "TaskConfigCmd";
-    private static final String CONTROLLER_QUEUE = "ControllerCmd";
 
     private BlackboardClient blackboard;
     private MessageBusClient messageBus;
@@ -53,7 +52,6 @@ public class TaskConfiguratorMain {
 
         Channel channel = messageBus.getChannel();
         channel.queueDeclare(TASK_CONFIG_QUEUE, true, false, false, null);
-        channel.queueDeclare(CONTROLLER_QUEUE, true, false, false, null);
 
         LOG.info("任务配置器已启动，监听队列: {}", TASK_CONFIG_QUEUE);
 
@@ -68,7 +66,8 @@ public class TaskConfiguratorMain {
             }
         };
 
-        channel.basicConsume(TASK_CONFIG_QUEUE, false, deliverCallback, consumerTag -> {});
+        channel.basicConsume(TASK_CONFIG_QUEUE, false, deliverCallback, consumerTag -> {
+        });
     }
 
     private String getConfigOrDefault(String fieldName, String defaultValue) {
@@ -105,76 +104,118 @@ public class TaskConfiguratorMain {
         blackboard.setMapSize(mapWidth, mapHeight);
         LOG.info("Redis 已清空，地图尺寸: {}x{}", mapWidth, mapHeight);
 
-        // 2. 生成随机障碍物
-        int obstacleCount = generateObstacles(mapWidth, mapHeight, obstacleDensity, carCount);
+        // 2. 初始化未探索区域索引（全部格子加入 unexplored:set，障碍物生成时自动移除）
+        blackboard.initUnexploredSet(mapWidth, mapHeight);
 
-        // 3. 初始化所有小车（分散起始位置避免拥堵）
-        int[][] startOffsets = {{0,0}, {2,0}, {0,2}, {-2,0}, {0,-2}};
+        // 3. 计算网格分区出生点（将车辆均匀分散到地图各区域）
+        List<Point> spawnPoints = computeSpawnPoints(mapWidth, mapHeight, carCount);
+
+        // 4. 构建禁区集合（所有出生点及其周围 3x3 区域，避免障碍物生成在出生点）
+        Set<Point> forbidden = buildForbiddenZone(spawnPoints, mapWidth, mapHeight);
+
+        // 5. 生成随机障碍物（避开禁区，自动从 unexplored:set 移除）
+        int obstacleCount = generateObstacles(mapWidth, mapHeight, obstacleDensity, forbidden);
+
+        // 6. 初始化所有小车（放置在网格分区出生点，并点亮出生区域）
         List<String> carIds = new ArrayList<>();
         for (int i = 1; i <= carCount; i++) {
             String carId = String.format("Car%03d", i);
             carIds.add(carId);
-            int[] off = startOffsets[(i - 1) % startOffsets.length];
-            int startX = Math.max(1, Math.min(mapWidth - 2, mapWidth / 2 + off[0]));
-            int startY = Math.max(1, Math.min(mapHeight - 2, mapHeight / 2 + off[1]));
-            blackboard.setCarPosition(carId, startX, startY);
+            Point spawn = spawnPoints.get(i - 1);
+            blackboard.setCarPosition(carId, spawn.x, spawn.y);
             blackboard.setCarStatus(carId, CarStatus.IDLE);
             blackboard.setCarSteps(carId, 0);
-            LOG.info("已初始化小车: carId={}, position=({},{})", carId, startX, startY);
+            // 点亮出生点及其周围 3×3 区域（避免出生点被视为"未探索"目标）
+            blackboard.illuminateArea(spawn.x, spawn.y);
+            LOG.info("已初始化小车: carId={}, position=({},{})", carId, spawn.x, spawn.y);
         }
 
-        // 4. 写入任务配置
+        // 7. 写入任务配置
         Map<String, String> config = new HashMap<>();
         config.put("mapWidth", String.valueOf(mapWidth));
         config.put("mapHeight", String.valueOf(mapHeight));
         config.put("carCount", String.valueOf(carCount));
         config.put("cars", JSON.toJSONString(carIds));
         config.put("obstacleDensity", String.valueOf(obstacleDensity));
+        String routeAlgorithm = data.getString("routeAlgorithm");
+        config.put("routeAlgorithm", routeAlgorithm != null ? routeAlgorithm : "BFS");
         boolean startActive = data.getBooleanValue("active", false);
         config.put("taskActive", startActive ? "1" : "0");
         blackboard.setTaskConfig(config);
 
-        // 5. 声明系统队列和 Exchange
+        // 7.5 初始化 FIFO 任务队列（每辆车入队 ROUTE_NEEDED）
+        blackboard.clearTaskQueue();
+        for (String carId : carIds) {
+            blackboard.pushTask("ROUTE_NEEDED", carId, null);
+        }
+        LOG.info("已初始化 taskQueue: {} 个 ROUTE_NEEDED 任务", carIds.size());
+
+        // 8. 声明系统队列和 Exchange
         try {
             messageBus.declareAllSystemQueues();
         } catch (IOException e) {
             LOG.error("声明系统队列失败: {}", e.getMessage(), e);
         }
 
-        // 6. 发送 TASK_READY
-        JSONObject responseData = new JSONObject();
-        responseData.put("mapWidth", mapWidth);
-        responseData.put("mapHeight", mapHeight);
-        responseData.put("carCount", carCount);
-        responseData.put("obstacleCount", obstacleCount);
-
-        MQMessage response = new MQMessage();
-        response.setCmd("TASK_READY");
-        response.setData(responseData);
-        response.setTimestamp(System.currentTimeMillis());
-
-        messageBus.sendToQueue(CONTROLLER_QUEUE, response);
-        LOG.info("发送 TASK_READY: mapWidth={}, mapHeight={}, carCount={}, obstacleCount={}",
-                mapWidth, mapHeight, carCount, obstacleCount);
+        LOG.info("初始化完成: mapWidth={}, mapHeight={}, carCount={}, obstacleCount={}, " +
+                "taskQueue 已填入 {} 个 ROUTE_NEEDED 任务。等待用户 Start 激活 Controller",
+                mapWidth, mapHeight, carCount, obstacleCount, carIds.size());
     }
 
-    private int generateObstacles(int mapWidth, int mapHeight, double obstacleDensity, int carCount) {
-        int totalCells = mapWidth * mapHeight;
-        int targetObstacleCount = (int) (totalCells * obstacleDensity);
+    /**
+     * 计算网格分区出生点，将 N 辆车均匀分散到地图不同区域。
+     * 网格划分: cols = ceil(sqrt(N)), rows = ceil(N / cols)
+     * 每辆车分配到对应格子的中心点。
+     */
+    private List<Point> computeSpawnPoints(int mapWidth, int mapHeight, int carCount) {
+        int cols = (int) Math.ceil(Math.sqrt(carCount));
+        int rows = (int) Math.ceil((double) carCount / cols);
+        int cellW = mapWidth / cols;
+        int cellH = mapHeight / rows;
 
-        // 避开小车初始位置（中心）的 3x3 区域
-        int centerX = mapWidth / 2;
-        int centerY = mapHeight / 2;
+        LOG.info("网格分区: {}x{} 地图, {} 辆车 → {}列×{}行, 每格 {}×{}",
+                mapWidth, mapHeight, carCount, cols, rows, cellW, cellH);
+
+        List<Point> spawns = new ArrayList<>();
+        int idx = 0;
+        for (int row = 0; row < rows && idx < carCount; row++) {
+            for (int col = 0; col < cols && idx < carCount; col++) {
+                // 格子中心作为出生点
+                int cx = col * cellW + cellW / 2;
+                int cy = row * cellH + cellH / 2;
+                // 确保在边界内
+                cx = Math.max(1, Math.min(mapWidth - 2, cx));
+                cy = Math.max(1, Math.min(mapHeight - 2, cy));
+                spawns.add(new Point(cx, cy));
+                idx++;
+            }
+        }
+        return spawns;
+    }
+
+    /**
+     * 构建禁区集合：所有出生点及其周围 3x3 区域不得生成障碍物
+     */
+    private Set<Point> buildForbiddenZone(List<Point> spawnPoints, int mapWidth, int mapHeight) {
         Set<Point> forbidden = new HashSet<>();
-        for (int dy = -1; dy <= 1; dy++) {
-            for (int dx = -1; dx <= 1; dx++) {
-                int nx = centerX + dx;
-                int ny = centerY + dy;
-                if (nx >= 0 && nx < mapWidth && ny >= 0 && ny < mapHeight) {
-                    forbidden.add(new Point(nx, ny));
+        for (Point spawn : spawnPoints) {
+            for (int dy = -1; dy <= 1; dy++) {
+                for (int dx = -1; dx <= 1; dx++) {
+                    int nx = spawn.x + dx;
+                    int ny = spawn.y + dy;
+                    if (nx >= 0 && nx < mapWidth && ny >= 0 && ny < mapHeight) {
+                        forbidden.add(new Point(nx, ny));
+                    }
                 }
             }
         }
+        LOG.info("禁区集合: {} 个出生点, {} 个禁止放置格", spawnPoints.size(), forbidden.size());
+        return forbidden;
+    }
+
+    private int generateObstacles(int mapWidth, int mapHeight, double obstacleDensity, Set<Point> forbidden) {
+        int totalCells = mapWidth * mapHeight;
+        int targetObstacleCount = (int) (totalCells * obstacleDensity);
 
         int placed = 0;
         int maxAttempts = targetObstacleCount * 20;

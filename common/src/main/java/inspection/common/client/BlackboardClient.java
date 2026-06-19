@@ -39,6 +39,20 @@ public class BlackboardClient {
     private int mapHeight;
     private long lastConfigRefresh = 0;
 
+    // ===== Bitmap 缓存（减少重复 Redis GET） =====
+    private byte[] cachedMapViewBytes;
+    private long cachedMapViewVersion = -1;
+    private byte[] cachedMapBlockedBytes;
+    private long cachedMapBlockedVersion = -1;
+
+    /** 强制失效所有 bitmap 缓存（跨进程感知，Navigator 规划前调用） */
+    public void invalidateBitmapCache() {
+        this.cachedMapViewBytes = null;
+        this.cachedMapViewVersion = -1;
+        this.cachedMapBlockedBytes = null;
+        this.cachedMapBlockedVersion = -1;
+    }
+
     public BlackboardClient(String host, int port) {
         this(host, port, ConfigConstants.DEFAULT_MAP_WIDTH, ConfigConstants.DEFAULT_MAP_HEIGHT);
     }
@@ -86,6 +100,21 @@ public class BlackboardClient {
     public int getMapWidth() { refreshMapConfig(); return mapWidth; }
     public int getMapHeight() { refreshMapConfig(); return mapHeight; }
 
+    /** 获取 bitmap 版本号（跨进程缓存失效用） */
+    private long getBitmapVersion(String versionKey) {
+        try (Jedis jedis = pool.getResource()) {
+            String val = jedis.get(versionKey);
+            return val != null ? Long.parseLong(val) : 0;
+        }
+    }
+
+    /** 递增 bitmap 版本号 */
+    private void incrementBitmapVersion(String versionKey) {
+        try (Jedis jedis = pool.getResource()) {
+            jedis.incr(versionKey);
+        }
+    }
+
     // ==================== 地图操作 ====================
 
     /** 将 (x,y) 转成 bitmap 偏移 */
@@ -93,12 +122,11 @@ public class BlackboardClient {
         return (long) y * mapWidth + x;
     }
 
-    /** 用 GET 一次性获取 bitmap 全部字节，解码为 boolean 二维数组（替代 N² 次 GETBIT） */
-    public boolean[][] getBitmapAsGrid(String key, int width, int height) {
-        boolean[][] grid = new boolean[height][width];
+    /** 从 Redis 读取 bitmap 原始字节数组 */
+    private byte[] getBitmapBytes(String key) {
         try (Jedis jedis = pool.getResource()) {
             byte[] data = jedis.get(key.getBytes());
-            int expectedBytes = (width * height + 7) / 8;
+            int expectedBytes = (mapWidth * mapHeight + 7) / 8;
             if (data == null) {
                 data = new byte[expectedBytes];
             } else if (data.length < expectedBytes) {
@@ -106,42 +134,55 @@ public class BlackboardClient {
                 System.arraycopy(data, 0, newData, 0, data.length);
                 data = newData;
             }
+            return data;
+        } catch (Exception e) {
+            log.warn("getBitmapBytes failed for {}", key, e);
+            return new byte[(mapWidth * mapHeight + 7) / 8];
+        }
+    }
 
-            // ===== 新增：调试专用，只打印特定区域（例如 15,15 周围） =====
-            int debugCx = 15, debugCy = 15; // 你可以根据小车位置动态改，或固定写 15,15
-
-            for (int y = 0; y < height; y++) {
-                for (int x = 0; x < width; x++) {
-                    int offset = y * width + x;
-                    int byteIdx = offset / 8;
-                    int bitIdx = offset % 8;
-                    // 只针对小车周围 3x3 区域打印
-                    if (x >= debugCx - 1 && x <= debugCx + 1 && y >= debugCy - 1 && y <= debugCy + 1) {
-                        int byteVal = data[byteIdx] & 0xFF;
-                        //log.info("解码: x={}, y={}, offset={}, byteIdx={}, bitIdx={}, byteValue={}, bit={}",x, y, offset, byteIdx, bitIdx, byteVal, (data[byteIdx] & (1 << bitIdx)) != 0);
-                    }
-                    if (byteIdx < data.length) {
-                        grid[y][x] = (data[byteIdx] & (1 << bitIdx)) != 0;
-                    }
-                    // 如果 byteIdx >= data.length，grid 保持 false（但上面已补齐数组，不会发生）
+    /** 从已读取的字节数组解码为 boolean 二维数组 */
+    private boolean[][] decodeCachedBitmap(byte[] data, int width, int height) {
+        boolean[][] grid = new boolean[height][width];
+        for (int y = 0; y < height; y++) {
+            for (int x = 0; x < width; x++) {
+                int offset = y * width + x;
+                int byteIdx = offset / 8;
+                if (byteIdx < data.length) {
+                    // Redis 中 offset 0 对应字节 MSB (bit 7)
+                    grid[y][x] = (data[byteIdx] & (1 << (7 - (offset % 8)))) != 0;
                 }
             }
-        } catch (Exception e) {
-            log.warn("getBitmapAsGrid failed", e);
         }
         return grid;
     }
 
-    /** 获取整个地图的探索状态（boolean 二维数组） */
+    /** 用 GET 一次性获取 bitmap 全部字节，解码为 boolean 二维数组（替代 N² 次 GETBIT） */
+    public boolean[][] getBitmapAsGrid(String key, int width, int height) {
+        byte[] data = getBitmapBytes(key);
+        return decodeCachedBitmap(data, width, height);
+    }
+
+    /** 获取整个地图的探索状态（boolean 二维数组），带跨进程缓存 */
     public boolean[][] getMapView() {
         refreshMapConfig();
-        return getBitmapAsGrid(ConfigConstants.KEY_MAP_VIEW, mapWidth, mapHeight);
+        long currentVersion = getBitmapVersion(ConfigConstants.KEY_MAP_VIEW_VERSION);
+        if (cachedMapViewBytes != null && currentVersion == cachedMapViewVersion) {
+            return decodeCachedBitmap(cachedMapViewBytes, mapWidth, mapHeight);
+        }
+        // 缓存未命中：重新读取
+        byte[] data = getBitmapBytes(ConfigConstants.KEY_MAP_VIEW);
+        cachedMapViewBytes = data;
+        cachedMapViewVersion = currentVersion;
+        return decodeCachedBitmap(data, mapWidth, mapHeight);
     }
 
     /** 设置地图某位的探索状态 */
     public void setMapViewBit(int x, int y) {
         try (Jedis jedis = pool.getResource()) {
             jedis.setbit(ConfigConstants.KEY_MAP_VIEW, bitmapOffset(x, y), true);
+            removeFromUnexploredSet(jedis, x, y);
+            jedis.incr(ConfigConstants.KEY_MAP_VIEW_VERSION);
         }
     }
 
@@ -152,20 +193,24 @@ public class BlackboardClient {
         }
     }
 
-    /** 3x3 点亮：以 (cx,cy) 为中心照亮周围（使用 pipeline 批量提交） */
+    /** 3×3 点亮：Pipeline 批量写入，保证 9 格原子性，避免其他进程读到半成品 */
     public void illuminateArea(int cx, int cy) {
         refreshMapConfig();
         int r = ConfigConstants.ILLUMINATE_RADIUS;
         try (Jedis jedis = pool.getResource()) {
+            var pipeline = jedis.pipelined();
             for (int dy = -r; dy <= r; dy++) {
                 for (int dx = -r; dx <= r; dx++) {
                     int nx = cx + dx;
                     int ny = cy + dy;
                     if (nx >= 0 && nx < mapWidth && ny >= 0 && ny < mapHeight) {
-                        jedis.setbit(ConfigConstants.KEY_MAP_VIEW, bitmapOffset(nx, ny), true);
+                        pipeline.setbit(ConfigConstants.KEY_MAP_VIEW, bitmapOffset(nx, ny), true);
+                        pipeline.srem(ConfigConstants.KEY_UNEXPLORED_SET, nx + "," + ny);
                     }
                 }
             }
+            pipeline.incr(ConfigConstants.KEY_MAP_VIEW_VERSION);
+            pipeline.sync();
         }
     }
 
@@ -179,11 +224,13 @@ public class BlackboardClient {
         }
     }
 
-    /** 设置障碍物 */
+    /** 设置障碍物，同步从 unexplored:set 移除 */
     public void setBlocked(int x, int y) {
         refreshMapConfig();
         try (Jedis jedis = pool.getResource()) {
             jedis.setbit(ConfigConstants.KEY_MAP_BLOCKED, bitmapOffset(x, y), true);
+            removeFromUnexploredSet(jedis, x, y);
+            jedis.incr(ConfigConstants.KEY_MAP_BLOCKED_VERSION);
         }
     }
 
@@ -192,6 +239,7 @@ public class BlackboardClient {
         refreshMapConfig();
         try (Jedis jedis = pool.getResource()) {
             jedis.setbit(ConfigConstants.KEY_MAP_BLOCKED, bitmapOffset(x, y), false);
+            jedis.incr(ConfigConstants.KEY_MAP_BLOCKED_VERSION);
         }
     }
 
@@ -210,10 +258,17 @@ public class BlackboardClient {
         return list;
     }
 
-    /** 获取地图阻挡状态二维数组（供 Navigator 路径规划使用） */
+    /** 获取地图阻挡状态二维数组（供 Navigator 路径规划使用），带缓存 */
     public boolean[][] getMapBlocked() {
         refreshMapConfig();
-        return getBitmapAsGrid(ConfigConstants.KEY_MAP_BLOCKED, mapWidth, mapHeight);
+        long currentVersion = getBitmapVersion(ConfigConstants.KEY_MAP_BLOCKED_VERSION);
+        if (cachedMapBlockedBytes != null && currentVersion == cachedMapBlockedVersion) {
+            return decodeCachedBitmap(cachedMapBlockedBytes, mapWidth, mapHeight);
+        }
+        byte[] data = getBitmapBytes(ConfigConstants.KEY_MAP_BLOCKED);
+        cachedMapBlockedBytes = data;
+        cachedMapBlockedVersion = currentVersion;
+        return decodeCachedBitmap(data, mapWidth, mapHeight);
     }
 
     // ==================== 小车状态 ====================
@@ -414,12 +469,14 @@ public class BlackboardClient {
         return count;
     }
 
-    /** 获取探索百分比 (0.0 ~ 100.0) */
+    /** 获取探索百分比 (0.0 ~ 100.0)，排除障碍物 */
     public double getExploredPercent() {
         refreshMapConfig();
-        int total = mapWidth * mapHeight;
-        if (total == 0) return 0.0;
-        return getExploredCount() * 100.0 / total;
+        int obstacleCount = getObstacleCount();
+        int explorable = mapWidth * mapHeight - obstacleCount;
+        if (explorable <= 0) return 100.0;
+        double pct = getExploredCount() * 100.0 / explorable;
+        return Math.min(100.0, pct);
     }
 
     /** 获取所有小车 ID 列表 */
@@ -449,6 +506,78 @@ public class BlackboardClient {
         }
     }
 
+    // ==================== FIFO 任务队列 ====================
+
+    /**
+     * 向 taskQueue 队尾 RPUSH 一个任务
+     * @param taskType  任务类型 (ROUTE_NEEDED / MOVE_READY / BLOCKED)
+     * @param carId     关联车辆 ID
+     * @param extra     附加字段 (可为 null)
+     */
+    public void pushTask(String taskType, String carId, Map<String, String> extra) {
+        try (Jedis jedis = pool.getResource()) {
+            Map<String, String> task = new LinkedHashMap<>();
+            task.put("type", taskType);
+            task.put("carId", carId);
+            if (extra != null) {
+                task.putAll(extra);
+            }
+            jedis.rpush(ConfigConstants.KEY_TASK_QUEUE, JSON.toJSONString(task));
+        }
+    }
+
+    /**
+     * 推送全局任务（无 carId），供 Display/Controller 使用
+     * 任务类型: START / PAUSE / SET_CONFIG / RESET
+     */
+    public void pushTask(String taskType, Map<String, String> extra) {
+        try (Jedis jedis = pool.getResource()) {
+            Map<String, String> task = new LinkedHashMap<>();
+            task.put("type", taskType);
+            if (extra != null) {
+                task.putAll(extra);
+            }
+            jedis.rpush(ConfigConstants.KEY_TASK_QUEUE, JSON.toJSONString(task));
+        }
+    }
+
+    /**
+     * 从 taskQueue 队首 LPOP 一个任务
+     * @return 任务 Map, 队列为空返回 null
+     */
+    @SuppressWarnings("unchecked")
+    public Map<String, String> popTask() {
+        try (Jedis jedis = pool.getResource()) {
+            String json = jedis.lpop(ConfigConstants.KEY_TASK_QUEUE);
+            if (json == null) return null;
+            return JSON.parseObject(json, Map.class);
+        }
+    }
+
+    /** BLPOP 阻塞式出队（事件驱动架构用），超时返回 null */
+    @SuppressWarnings("unchecked")
+    public Map<String, String> blockingPopTask(int timeoutSeconds) {
+        try (Jedis jedis = pool.getResource()) {
+            List<String> result = jedis.blpop(timeoutSeconds, ConfigConstants.KEY_TASK_QUEUE);
+            if (result == null || result.size() < 2) return null;
+            return JSON.parseObject(result.get(1), Map.class);
+        }
+    }
+
+    /** 获取 taskQueue 当前长度 */
+    public long getTaskQueueLength() {
+        try (Jedis jedis = pool.getResource()) {
+            return jedis.llen(ConfigConstants.KEY_TASK_QUEUE);
+        }
+    }
+
+    /** 清空 taskQueue */
+    public void clearTaskQueue() {
+        try (Jedis jedis = pool.getResource()) {
+            jedis.del(ConfigConstants.KEY_TASK_QUEUE);
+        }
+    }
+
     // ==================== 分布式锁 ====================
 
     public DistributedLock getCarLock(String carId) {
@@ -459,12 +588,77 @@ public class BlackboardClient {
         return new DistributedLock(pool, ConfigConstants.KEY_LOCK_CONTROLLER);
     }
 
+    /** 目标分配全局互斥锁（防止多车选同一目标） */
+    public DistributedLock getTargetAllocationLock() {
+        return new DistributedLock(pool, ConfigConstants.KEY_LOCK_TARGET_ALLOCATION);
+    }
+
+    // ==================== 未探索区域索引 ====================
+
+    /**
+     * 初始化未探索区域索引（仅在 TaskConfigurator 调用 clearAll 后使用）
+     * 将所有非障碍物格子加入 unexplored:set，供 O(1) 随机选取
+     */
+    public void initUnexploredSet(int width, int height) {
+        try (Jedis jedis = pool.getResource()) {
+            String key = ConfigConstants.KEY_UNEXPLORED_SET;
+            jedis.del(key);
+            String[] members = new String[width * height];
+            int idx = 0;
+            for (int y = 0; y < height; y++) {
+                for (int x = 0; x < width; x++) {
+                    members[idx++] = x + "," + y;
+                }
+            }
+            // 分批 SADD，避免单次命令参数过多
+            int batchSize = 1000;
+            for (int i = 0; i < members.length; i += batchSize) {
+                int end = Math.min(i + batchSize, members.length);
+                jedis.sadd(key, java.util.Arrays.copyOfRange(members, i, end));
+            }
+        }
+    }
+
+    /** 从未探索索引中移除 (x,y)（内部使用，复用 Jedis 连接） */
+    private void removeFromUnexploredSet(Jedis jedis, int x, int y) {
+        jedis.srem(ConfigConstants.KEY_UNEXPLORED_SET, x + "," + y);
+    }
+
+    /** 从未探索索引中移除 (x,y) */
+    public void removeFromUnexploredSet(int x, int y) {
+        try (Jedis jedis = pool.getResource()) {
+            removeFromUnexploredSet(jedis, x, y);
+        }
+    }
+
+    /** O(1) 随机获取一个未探索坐标（供 TargetPlanner / Navigator 使用） */
+    public Point getRandomUnexplored() {
+        try (Jedis jedis = pool.getResource()) {
+            String member = jedis.srandmember(ConfigConstants.KEY_UNEXPLORED_SET);
+            if (member == null) return null;
+            String[] parts = member.split(",");
+            return new Point(Integer.parseInt(parts[0]), Integer.parseInt(parts[1]));
+        }
+    }
+
+    /** 获取未探索坐标总数 */
+    public long getUnexploredCount() {
+        try (Jedis jedis = pool.getResource()) {
+            return jedis.scard(ConfigConstants.KEY_UNEXPLORED_SET);
+        }
+    }
+
     // ==================== 管理 ====================
 
     /** 仅 TaskConfigurator 调用：清空所有数据 */
     public void clearAll() {
         try (Jedis jedis = pool.getResource()) {
             jedis.flushDB();
+            // 清除本地缓存
+            cachedMapViewBytes = null;
+            cachedMapViewVersion = -1;
+            cachedMapBlockedBytes = null;
+            cachedMapBlockedVersion = -1;
             log.info("Redis 数据库已清空 (FLUSHDB)");
         }
     }

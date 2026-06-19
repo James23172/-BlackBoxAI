@@ -8,37 +8,35 @@ import inspection.common.client.BlackboardClient;
 import inspection.common.client.DistributedLock;
 import inspection.common.client.MessageBusClient;
 import inspection.common.config.ConfigConstants;
+import inspection.common.enums.CarStatus;
 import inspection.common.model.MQMessage;
 import inspection.common.model.Point;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.nio.charset.StandardCharsets;
-import java.util.List;
+import java.util.*;
 
 /**
- * 导航器主类
- * 监听 NavigatorCmd 队列，处理 PLAN_ROUTE 请求
+ * 导航器 — 目标选择 + 路径规划
+ * 监听共享竞争队列 Navigator4CarID，接收 NAVIGATE 请求
+ * 按照架构文档：自行扫描未探索区域、选目标、加权 BFS 规划路径
+ * 不回复 ControllerCmd，只通过 Redis taskQueue 反馈结果
  */
 public class NavigatorMain {
     private static final Logger LOG = LoggerFactory.getLogger(NavigatorMain.class);
-    private static final String NAVIGATOR_QUEUE = "NavigatorCmd";
-    private static final String CONTROLLER_QUEUE = "ControllerCmd";
 
     private BlackboardClient blackboard;
     private MessageBusClient messageBus;
     private final PathPlanner bfsPlanner = new BFSPlanner();
-    private final PathPlanner aStarPlanner = new AStarPlanner();
 
     public static void main(String[] args) throws Exception {
         new NavigatorMain().start();
     }
 
     public void start() throws Exception {
-        // 初始化黑板客户端（假设 BlackboardClient 构造为 (host, port)）
         blackboard = new BlackboardClient(ConfigConstants.REDIS_HOST, ConfigConstants.REDIS_PORT);
 
-        // 初始化消息总线客户端：使用 5 参数构造
         String rabbitHost = ConfigConstants.RABBITMQ_HOST;
         int rabbitPort = ConfigConstants.RABBITMQ_PORT;
         String rabbitUser = getConfigOrDefault("RABBIT_USER", "guest");
@@ -46,16 +44,16 @@ public class NavigatorMain {
         String rabbitVhost = getConfigOrDefault("RABBIT_VHOST", "/");
         messageBus = new MessageBusClient(rabbitHost, rabbitPort, rabbitUser, rabbitPass, rabbitVhost);
 
-        Channel channel = messageBus.getChannel();   // 需确保 MessageBusClient 提供 getChannel()
-        channel.queueDeclare(NAVIGATOR_QUEUE, true, false, false, null);
-        channel.queueDeclare(CONTROLLER_QUEUE, true, false, false, null);
+        String navQueue = ConfigConstants.QUEUE_NAVIGATOR_4_CAR_ID;
+        Channel channel = messageBus.getChannel();
+        channel.queueDeclare(navQueue, true, false, false, null);
 
-        LOG.info("导航器已启动，监听队列: {}", NAVIGATOR_QUEUE);
+        LOG.info("导航器已启动，监听队列: {}", navQueue);
 
         DeliverCallback deliverCallback = (consumerTag, delivery) -> {
             String message = new String(delivery.getBody(), StandardCharsets.UTF_8);
             try {
-                handlePlanRouteMessage(message);
+                handleNavigate(message);
             } catch (Exception e) {
                 LOG.error("处理消息失败: {}", message, e);
             } finally {
@@ -63,12 +61,9 @@ public class NavigatorMain {
             }
         };
 
-        channel.basicConsume(NAVIGATOR_QUEUE, false, deliverCallback, consumerTag -> {});
+        channel.basicConsume(navQueue, false, deliverCallback, consumerTag -> {});
     }
 
-    /**
-     * 从 ConfigConstants 读取常量，如果不存在则返回默认值
-     */
     private String getConfigOrDefault(String fieldName, String defaultValue) {
         try {
             java.lang.reflect.Field field = ConfigConstants.class.getField(fieldName);
@@ -79,88 +74,179 @@ public class NavigatorMain {
         }
     }
 
-    private void handlePlanRouteMessage(String messageJson) {
+    // ==================== NAVIGATE 处理：目标选择 + 路径规划 ====================
+
+    private void handleNavigate(String messageJson) {
         MQMessage msg = JSON.parseObject(messageJson, MQMessage.class);
         String cmd = msg.getCmd();
-        if (!"PLAN_ROUTE".equals(cmd)) {
-            LOG.warn("忽略非 PLAN_ROUTE 命令: {}", cmd);
+        if (!"NAVIGATE".equals(cmd)) {
+            LOG.warn("忽略非 NAVIGATE 命令: {}", cmd);
             return;
         }
 
         JSONObject data = JSONObject.parseObject(JSON.toJSONString(msg.getData()));
         String carId = data.getString("carId");
-        String algorithm = data.getString("algorithm");
+        LOG.info("🧭 [NAVIGATE] 收到: carId={}", carId);
 
-        LOG.info("收到路径规划请求: carId={}, algorithm={}", carId, algorithm);
-
-        Point start = blackboard.getCarPosition(carId);
-        Point target = blackboard.getCarTarget(carId);
-        if (start == null || target == null) {
-            LOG.error("小车 {} 位置或目标为空", carId);
-            sendRoutePlannedResponse(carId, false, 0);
+        // ──── 1. 目标选择（全局互斥，防止多车选同一目标） ────
+        Point carPos = blackboard.getCarPosition(carId);
+        if (carPos == null) {
+            LOG.error("小车 {} 位置为空", carId);
+            handleNavigateFailed(carId);
             return;
         }
 
-        // 检查目标点是否被阻塞
-        if (blackboard.isBlocked(target.getX(), target.getY())) {
-            LOG.info("目标点 ({},{}) 被阻塞", target.getX(), target.getY());
-            sendRoutePlannedResponse(carId, false, 0);
+        DistributedLock targetAllocLock = blackboard.getTargetAllocationLock();
+        if (!targetAllocLock.tryLock(3000)) {
+            LOG.warn("目标分配锁获取超时, carId={}", carId);
+            handleNavigateFailed(carId);
+            return;
+        }
+        Point target;
+        try {
+            target = selectTarget(carId, carPos);
+            if (target == null) {
+                LOG.info("无未探索区域可供 {} 探索", carId);
+                return;  // finally 会 unlock
+            }
+            // 二次确认：重新检查是否有其他车刚占了这个目标
+            for (String cid : getKnownCarIds()) {
+                if (!cid.equals(carId)) {
+                    Point t = blackboard.getCarTarget(cid);
+                    if (t != null && t.equals(target)) {
+                        LOG.warn("目标 ({},{}) 已被 {} 抢占，放弃", target.x, target.y, cid);
+                        target = null;
+                        return;
+                    }
+                }
+            }
+            blackboard.setCarTarget(carId, target.getX(), target.getY());
+            LOG.info("已分配目标: carId={}, target=({},{})", carId, target.getX(), target.getY());
+        } finally {
+            targetAllocLock.unlock();
+        }
+        if (target == null) {
+            handleNavigateFailed(carId);
             return;
         }
 
+        // ──── 2. 路径规划 ────
         int width = blackboard.getMapWidth();
         int height = blackboard.getMapHeight();
         boolean[][] obstacles = blackboard.getMapBlocked();
+        boolean[][] explored = blackboard.getMapView();
 
-        PathPlanner planner;
-        if ("A_STAR".equals(algorithm)) {
-            planner = aStarPlanner;
-        } else {
-            planner = bfsPlanner;
-        }
-
-        List<Point> path = planner.plan(start, target, obstacles, width, height);
+        List<Point> path = bfsPlanner.plan(carPos, target, obstacles, explored, width, height);
         if (path == null || path.isEmpty()) {
-            LOG.warn("无法找到路径: {} -> {}", start, target);
-            sendRoutePlannedResponse(carId, false, 0);
+            LOG.warn("❌ 路径规划失败: {} -> {}", carPos, target);
+            handleNavigateFailed(carId);
             return;
         }
 
-        // 移除起点（小车已经在该位置）
-        if (!path.isEmpty() && path.get(0).equals(start)) {
+        LOG.info("✅ 路径规划成功: carId={}, start=({},{}), target=({},{}), 步数={}",
+                carId, carPos.x, carPos.y, target.x, target.y, path.size());
+
+        // 移除起点
+        if (!path.isEmpty() && path.get(0).equals(carPos)) {
             path = path.subList(1, path.size());
         }
+        if (path.isEmpty()) {
+            LOG.warn("⚠️路径移除起点后为空");
+            handleNavigateFailed(carId);
+            return;
+        }
 
-        // 加锁写入路径
+        // ──── 3. 写入路径 + 入队 MOVE_READY ────
         DistributedLock carLock = blackboard.getCarLock(carId);
         if (carLock.tryLock()) {
             try {
                 blackboard.clearRoute(carId);
                 blackboard.pushRoute(carId, path);
-                LOG.info("路径规划成功: carId={}, 步数={}", carId, path.size());
-                sendRoutePlannedResponse(carId, true, path.size());
+                blackboard.setCarStatus(carId, CarStatus.IDLE);
+                blackboard.pushTask("MOVE_READY", carId, null);
+                LOG.info("📤 [Navigator] pushTask(MOVE_READY) → Redis taskQueue, carId={}", carId);
             } finally {
                 carLock.unlock();
             }
         } else {
             LOG.warn("获取小车 {} 锁失败", carId);
-            sendRoutePlannedResponse(carId, false, 0);
+            handleNavigateFailed(carId);
         }
     }
 
-    private void sendRoutePlannedResponse(String carId, boolean routeFound, int routeLength) {
-        JSONObject responseData = new JSONObject();
-        responseData.put("carId", carId);
-        responseData.put("routeFound", routeFound);
-        if (routeFound) {
-            responseData.put("routeLength", routeLength);
+    /** 路径规划失败：标记不可达目标为"已尝试"，清理，重新入队 ROUTE_NEEDED */
+    private void handleNavigateFailed(String carId) {
+        // BFS 不可达 → 目标被障碍物围死，标记为已探索以避免无限重试
+        Point unreachable = blackboard.getCarTarget(carId);
+        if (unreachable != null) {
+            blackboard.setMapViewBit(unreachable.x, unreachable.y);
+            LOG.info("标记不可达目标为已尝试: carId={}, target=({},{})", carId, unreachable.x, unreachable.y);
         }
-        MQMessage response = new MQMessage();
-        response.setCmd("ROUTE_PLANNED");
-        response.setData(responseData);
-        response.setTimestamp(System.currentTimeMillis());
+        blackboard.setCarStatus(carId, CarStatus.IDLE);
+        try { blackboard.clearCarTarget(carId); } catch (Exception e) { /* ignore */ }
+        blackboard.pushTask("ROUTE_NEEDED", carId, null);
+        LOG.info("导航失败: carId={}, 已清理目标，重新入队 ROUTE_NEEDED", carId);
+    }
 
-        messageBus.sendToQueue(CONTROLLER_QUEUE, response);
-        LOG.info("发送 ROUTE_PLANNED: carId={}, routeFound={}", carId, routeFound);
+    // ==================== 贪心目标选择 ====================
+
+    private Point selectTarget(String carId, Point carPos) {
+        int w = blackboard.getMapWidth();
+        int h = blackboard.getMapHeight();
+
+        blackboard.invalidateBitmapCache();
+        boolean[][] explored = blackboard.getMapView();
+
+        // 1. 扫描所有未探索的格子 → 候选池
+        List<Point> candidates = new ArrayList<>();
+        for (int y = 0; y < h; y++)
+            for (int x = 0; x < w; x++)
+                if (!explored[y][x])
+                    candidates.add(new Point(x, y));
+
+        if (candidates.isEmpty()) return null;
+
+        // 2. 排除其他车已分配的目标（已探索格自然不在候选池中）
+        Set<Point> claimed = new HashSet<>();
+        for (String cid : getKnownCarIds())
+            if (!cid.equals(carId)) {
+                Point t = blackboard.getCarTarget(cid);
+                if (t != null) claimed.add(t);
+            }
+
+        // 3. 贪心：选距离 ≤ 3 的最近未探索格，其次全局最近
+        Point best = null;
+        int bestDist = Integer.MAX_VALUE;
+        for (Point p : candidates) {
+            if (claimed.contains(p)) continue;
+            int dist = p.distanceTo(carPos);
+            if (dist <= 3 && dist < bestDist) { bestDist = dist; best = p; }
+        }
+        if (best == null) {
+            for (Point p : candidates) {
+                if (claimed.contains(p)) continue;
+                int dist = p.distanceTo(carPos);
+                if (dist < bestDist) { bestDist = dist; best = p; }
+            }
+        }
+        return best;
+    }
+
+    private List<String> getKnownCarIds() {
+        List<String> ids = new ArrayList<>();
+        try {
+            Map<String, String> config = blackboard.getTaskConfig();
+            if (config != null && !config.isEmpty()) {
+                int carCount = Integer.parseInt(config.getOrDefault("carCount", "4"));
+                for (int i = 1; i <= carCount; i++) {
+                    ids.add(String.format("Car%03d", i));
+                }
+            } else {
+                ids.add("Car001");
+            }
+        } catch (Exception e) {
+            ids.add("Car001");
+        }
+        return ids;
     }
 }

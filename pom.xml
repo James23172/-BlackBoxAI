@@ -15,7 +15,6 @@
         <module>controller</module>
         <module>car</module>
         <module>navigator</module>
-        <module>target-planner</module>
         <module>task-configurator</module>
         <module>display</module>
     </modules>

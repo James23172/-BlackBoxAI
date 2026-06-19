@@ -7,6 +7,7 @@ import inspection.common.config.ConfigConstants;
 import inspection.common.model.CarState;
 import inspection.common.model.Point;
 import inspection.common.model.SimulationState;
+import org.java_websocket.WebSocket;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -17,7 +18,7 @@ import java.util.Map;
 /**
  * 状态广播器
  * 订阅 UpdateView Fanout Exchange，收到 REFRESH_ALL 时读取黑板全量状态
- * 构建 SimulationState JSON 推送给所有连接的浏览器
+ * 构建 SimulationState JSON 推送给所有连接的浏览器。
  */
 public class StateBroadcaster {
     private static final Logger LOG = LoggerFactory.getLogger(StateBroadcaster.class);
@@ -45,20 +46,23 @@ public class StateBroadcaster {
         LOG.info("StateBroadcaster 已订阅 Exchange: {}", ConfigConstants.EXCHANGE_UPDATE_VIEW);
     }
 
-    private void broadcastState() {
-        // 1. 读取地图
+    /** 向单个 WebSocket 客户端发送当前状态快照（新连接时调用） */
+    public void sendCurrentState(WebSocket conn) {
+        try {
+            String json = JSON.toJSONString(buildState());
+            conn.send(json);
+            LOG.debug("已发送当前状态到新客户端: {}", conn.getRemoteSocketAddress());
+        } catch (Exception e) {
+            LOG.warn("发送初始状态失败: {}", e.getMessage());
+        }
+    }
+
+    private SimulationState buildState() {
         int mapWidth = blackboard.getMapWidth();
         int mapHeight = blackboard.getMapHeight();
-        boolean[][] mapView = new boolean[mapHeight][mapWidth];
-        for (int y = 0; y < mapHeight; y++) {
-            for (int x = 0; x < mapWidth; x++) {
-                mapView[y][x] = blackboard.isExplored(x, y);
-            }
-        }
-        // 2. 读取障碍物列表
+        boolean[][] mapView = blackboard.getMapView();
         List<Point> obstacles = blackboard.getAllBlocked();
 
-        // 3. 读取所有小车状态
         List<CarState> carStates = new ArrayList<>();
         int carCount = 1;
         try {
@@ -81,7 +85,6 @@ public class StateBroadcaster {
             carStates.add(cs);
         }
 
-        // 4. 计算探索率
         int exploredCount = blackboard.getExploredCount();
         int obstacleCount = blackboard.getObstacleCount();
         int totalExplorable = mapWidth * mapHeight - obstacleCount;
@@ -89,7 +92,6 @@ public class StateBroadcaster {
                 ? (double) exploredCount / totalExplorable
                 : 0.0;
 
-        // 5. 构建 SimulationState
         SimulationState state = new SimulationState();
         state.setMapView(mapView);
         state.setMapWidth(mapWidth);
@@ -98,11 +100,13 @@ public class StateBroadcaster {
         state.setCars(carStates);
         state.setExploredRate(exploredRate);
         state.setTaskActive(blackboard.isTaskActive());
-        state.setTick(System.currentTimeMillis());
+        state.setTick(0);
         state.setCompleted(exploredRate >= 0.999);
+        return state;
+    }
 
-        // 6. 广播给所有浏览器
-        String json = JSON.toJSONString(state);
+    private void broadcastState() {
+        String json = JSON.toJSONString(buildState());
         wsServer.broadcast(json);
     }
 }

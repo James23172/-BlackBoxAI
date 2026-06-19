@@ -21,17 +21,13 @@ public final class ConfigConstants {
     public static final String RABBITMQ_VHOST = "/";
 
     // ==================== MQ 队列名称 ====================
-    /** Controller 订阅：接收所有知识源回复 */
-    public static final String QUEUE_CONTROLLER_CMD = "ControllerCmd";
-    /** Navigator 订阅：接收路径规划请求 */
-    public static final String QUEUE_NAVIGATOR_CMD = "NavigatorCmd";
-    /** TargetPlanner 订阅：接收目标分配请求 */
-    public static final String QUEUE_TARGET_PLANNER_CMD = "TargetPlannerCmd";
+    /** Navigator 共享竞争队列：接收导航请求 */
+    public static final String QUEUE_NAVIGATOR_4_CAR_ID = "Navigator4CarID";
     /** TaskConfigurator 订阅：接收配置请求 */
     public static final String QUEUE_TASK_CONFIG_CMD = "TaskConfigCmd";
 
-    /** Car 订阅队列前缀，完整名称: Car_{carId} */
-    public static final String QUEUE_CAR_PREFIX = "Car_";
+    /** Car 订阅队列前缀，完整名称: Car:{carId} */
+    public static final String QUEUE_CAR_PREFIX = "Car:";
 
     // ==================== MQ Exchange ====================
     /** Display 广播用的 Fanout Exchange */
@@ -60,12 +56,21 @@ public final class ConfigConstants {
     public static final String KEY_LOCK_CAR = "lock:car:%s";
     /** Controller 分布式锁 key */
     public static final String KEY_LOCK_CONTROLLER = "lock:controller";
+    /** 未探索坐标索引 Set key（Navigator/TargetPlanner O(1) 随机选取） */
+    public static final String KEY_UNEXPLORED_SET = "unexplored:set";
+    /** 目标分配全局互斥锁（防止多车选同一目标） */
+    public static final String KEY_LOCK_TARGET_ALLOCATION = "lock:target_allocation";
+    /** Bitmap 版本号 key（用于跨进程缓存失效检测） */
+    public static final String KEY_MAP_VIEW_VERSION = "map:view:version";
+    public static final String KEY_MAP_BLOCKED_VERSION = "map:blocked:version";
+    /** FIFO 任务队列 key（Controller LPOP/RPUSH） */
+    public static final String KEY_TASK_QUEUE = "taskQueue";
 
     // ==================== 地图参数默认值 ====================
     public static final int DEFAULT_MAP_WIDTH = 30;
     public static final int DEFAULT_MAP_HEIGHT = 30;
     public static final double DEFAULT_OBSTACLE_DENSITY = 0.1;
-    public static final int ILLUMINATE_RADIUS = 1;      // 3×3 点亮
+    public static final int ILLUMINATE_RADIUS = 1;      // 3×3 点亮（架构文档规定）
     public static final int BLOCKED_TIMEOUT_TICKS = 2;   // 受阻超时节拍
 
     // ==================== 节拍参数 ====================

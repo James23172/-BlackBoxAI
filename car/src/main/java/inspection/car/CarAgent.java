@@ -5,21 +5,22 @@ import inspection.common.client.DistributedLock;
 import inspection.common.client.MessageBusClient;
 import inspection.common.config.ConfigConstants;
 import inspection.common.enums.CarStatus;
-import inspection.common.enums.CommandType;
-import inspection.common.model.MQMessage;
 import inspection.common.model.Point;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.util.Map;
 import java.util.concurrent.atomic.AtomicLong;
 
+/**
+ * 小车代理（每车一个进程）
+ * 按照架构文档：收到 MOVE_STEP → 自主判断最优路径 → 移动 → 点亮
+ * 知识源反馈只通过 Redis taskQueue，不通过 RabbitMQ 回复 Controller
+ */
 public class CarAgent {
     private static final Logger log = LoggerFactory.getLogger(CarAgent.class);
 
     private final String carId;
     private final BlackboardClient bb;
-    private final MessageBusClient mq;
     private final Illuminator illuminator;
     private final DynamicObstacleManager obstacleManager;
     private final AtomicLong currentTick = new AtomicLong(0);
@@ -27,7 +28,6 @@ public class CarAgent {
     public CarAgent(String carId, BlackboardClient bb, MessageBusClient mq) {
         this.carId = carId;
         this.bb = bb;
-        this.mq = mq;
         this.illuminator = new Illuminator(bb);
         this.obstacleManager = new DynamicObstacleManager(bb);
     }
@@ -36,25 +36,29 @@ public class CarAgent {
         currentTick.set(tick);
 
         CarStatus status = bb.getCarStatus(carId);
-        if (status != CarStatus.READY) {
-            log.info("[Car:{}] 忽略 TICK_MOVE, 当前状态={}", carId, status);
-            return;
-        }
+        Point curPos = bb.getCarPosition(carId);
+        log.info("📩 [Car:{}] 收到 MOVE_STEP tick={}, 状态={}, pos=({},{})",
+                carId, tick, status,
+                curPos != null ? curPos.x : -1, curPos != null ? curPos.y : -1);
 
         DistributedLock lock = bb.getCarLock(carId);
         if (!lock.tryLock()) {
-            log.warn("[Car:{}] 获取锁失败，跳过本拍", carId);
+            log.warn("[Car:{}] 🔒 获取锁失败，跳过", carId);
             return;
         }
 
         try {
             Point next = bb.peekNextStep(carId);
             if (next == null) {
+                log.info("[Car:{}] 📭 peekNextStep=null, 路径走完", carId);
                 handleRouteDone();
                 return;
             }
 
+            log.info("[Car:{}] 🔍 peekNextStep=({},{}), isBlocked? {}", carId, next.x, next.y, bb.isBlocked(next.x, next.y));
+
             if (bb.isBlocked(next.x, next.y)) {
+                log.warn("[Car:{}] 🧱 下一步({},{})被阻塞!", carId, next.x, next.y);
                 handleBlocked();
                 return;
             }
@@ -62,25 +66,26 @@ public class CarAgent {
             Point oldPos = bb.getCarPosition(carId);
 
             bb.setCarStatus(carId, CarStatus.MOVING);
-
             bb.popNextStep(carId);
-
             obstacleManager.clearObstacle(oldPos);
-
             bb.setCarPosition(carId, next.x, next.y);
 
-            // 注意: 不把自己的位置设为障碍物，否则会挡住自己回路
-            // obstacleManager.setObstacle(next);  ← 删掉这行！
-
             illuminator.illuminate(next.x, next.y);
-
+            log.info("[Car:{}] 💡 illuminate({},{})", carId, next.x, next.y);
             bb.incrementCarSteps(carId);
 
+            // 两步前瞻
             Point stillNext = bb.peekNextStep(carId);
             if (stillNext != null) {
-                bb.setCarStatus(carId, CarStatus.READY);
-                sendReply(CommandType.MOVED.name(), Map.of("carId", carId, "x", next.x, "y", next.y));
-                log.info("[Car:{}] 移动至 ({},{}), 剩余步数>0, 状态=READY", carId, next.x, next.y);
+                if (bb.isBlocked(stillNext.x, stillNext.y)) {
+                    log.warn("[Car:{}] 两步前瞻: 第二步({},{})被阻塞，清空剩余路径重新规划",
+                            carId, stillNext.x, stillNext.y);
+                    bb.clearRoute(carId);
+                    handleRouteDone();
+                    return;
+                }
+                bb.setCarStatus(carId, CarStatus.IDLE);
+                log.info("[Car:{}] 🚗 移动至 ({},{})，两步前瞻通过", carId, next.x, next.y);
             } else {
                 handleRouteDone();
                 log.info("[Car:{}] 移动至 ({},{}) 后路径走完", carId, next.x, next.y);
@@ -93,20 +98,16 @@ public class CarAgent {
     private void handleBlocked() {
         bb.setCarStatus(carId, CarStatus.BLOCKED);
         bb.setBlockedTick(carId, currentTick.get());
-        sendReply(CommandType.CAR_BLOCKED.name(), Map.of("carId", carId, "tick", currentTick.get()));
-        log.warn("[Car:{}] 遇阻 → BLOCKED, tick={}", carId, currentTick.get());
+        bb.pushTask("BLOCKED", carId, java.util.Map.of("blockedTick", String.valueOf(currentTick.get())));
+        log.warn("[Car:{}] 遇阻 → BLOCKED, tick={}, 已入队BLOCKED", carId, currentTick.get());
     }
 
     private void handleRouteDone() {
         bb.setCarStatus(carId, CarStatus.IDLE);
         bb.clearCarTarget(carId);
         bb.clearRoute(carId);
-        sendReply(CommandType.ROUTE_DONE.name(), Map.of("carId", carId));
-        log.info("[Car:{}] 路径完成 → IDLE", carId);
-    }
-
-    private void sendReply(String cmd, Map<String, Object> data) {
-        mq.sendToQueue(ConfigConstants.QUEUE_CONTROLLER_CMD, new MQMessage(cmd, data));
+        bb.pushTask("ROUTE_NEEDED", carId, null);
+        log.info("[Car:{}] 路径完成 → IDLE, 已入队ROUTE_NEEDED", carId);
     }
 
     public String getCarId() { return carId; }

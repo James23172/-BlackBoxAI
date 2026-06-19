@@ -18,13 +18,12 @@ import java.util.function.Consumer;
  * 这是 common 模块最核心的类之一，所有模块只通过此类发送和接收 MQ 消息。
  *
  * 队列拓扑:
- *   ControllerCmd       → Controller 订阅（接收各知识源回复）
- *   NavigatorCmd        → Navigator 订阅（接收路径规划请求）
- *   TargetPlannerCmd    → TargetPlanner 订阅
- *   TaskConfigCmd       → TaskConfigurator 订阅
- *   Car_{carId}          → 各小车订阅（接收 TICK_MOVE）
+ *   Navigator4CarID     → Navigator 订阅（共享竞争，接收 NAVIGATE）
+ *   TaskConfigCmd       → TaskConfigurator 订阅（接收 FORWARD_CONFIG）
+ *   Car:{carId}          → 各小车订阅（接收 MOVE_STEP）
  *
  *   UpdateView Exchange  → Fanout 广播（Display 订阅 REFRESH_ALL）
+ *   Controller 不订阅任何队列，通过 Redis taskQueue 轮询接收反馈
  */
 public class MessageBusClient {
     private static final Logger log = LoggerFactory.getLogger(MessageBusClient.class);
@@ -93,11 +92,12 @@ public class MessageBusClient {
      * 声明所有系统队列（TaskConfigurator 启动时调用）
      */
     public void declareAllSystemQueues() throws IOException {
-        declareQueue(ConfigConstants.QUEUE_CONTROLLER_CMD);
-        declareQueue(ConfigConstants.QUEUE_NAVIGATOR_CMD);
-        declareQueue(ConfigConstants.QUEUE_TARGET_PLANNER_CMD);
+        declareQueue(ConfigConstants.QUEUE_NAVIGATOR_4_CAR_ID);
         declareQueue(ConfigConstants.QUEUE_TASK_CONFIG_CMD);
-        declareQueue(ConfigConstants.carQueueName(ConfigConstants.CAR_ID));
+        // 声明所有可能的小车队列（Car:001 ~ Car:004）
+        for (int i = 1; i <= 4; i++) {
+            declareQueue(ConfigConstants.carQueueName(String.format("Car%03d", i)));
+        }
         // 广播 Exchange
         declareFanoutExchange(ConfigConstants.EXCHANGE_UPDATE_VIEW);
         log.info("所有系统队列/Exchange 已声明");
@@ -148,6 +148,7 @@ public class MessageBusClient {
      */
     public void fanoutPublish(String exchangeName, String message) {
         try {
+            channel.exchangeDeclare(exchangeName, BuiltinExchangeType.FANOUT, true);
             channel.basicPublish(exchangeName, "",
                     MessageProperties.PERSISTENT_TEXT_PLAIN,
                     message.getBytes(StandardCharsets.UTF_8));

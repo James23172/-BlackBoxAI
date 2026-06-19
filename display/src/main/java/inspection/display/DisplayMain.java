@@ -1,11 +1,13 @@
 package inspection.display;
 
+import com.alibaba.fastjson2.JSONObject;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
 import com.sun.net.httpserver.HttpServer;
 import inspection.common.client.BlackboardClient;
 import inspection.common.client.MessageBusClient;
 import inspection.common.config.ConfigConstants;
+import inspection.common.model.MQMessage;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -43,11 +45,13 @@ public class DisplayMain {
 
         // 启动 WebSocket 服务器
         CommandReceiver wsServer = new CommandReceiver(new InetSocketAddress(wsPort), mq);
+        wsServer.setBlackboard(bb);
         wsServer.start();
         LOG.info("WebSocket 服务器已启动，端口: {}", wsPort);
 
         // 启动 StateBroadcaster（订阅 UpdateView 广播）
         StateBroadcaster broadcaster = new StateBroadcaster(bb, mq, wsServer);
+        wsServer.setStateBroadcaster(broadcaster);
         broadcaster.start();
 
         // 启动 HTTP 静态文件服务器
@@ -58,6 +62,18 @@ public class DisplayMain {
         LOG.info("HTTP 服务器已启动，端口: {}，访问 http://localhost:{}/index.html", httpPort, httpPort);
 
         LOG.info("Display 模块启动完成");
+
+        // 自动初始化：向 TaskConfigurator 发送默认配置，预加载地图与小车
+        JSONObject initData = new JSONObject();
+        initData.put("mapWidth", ConfigConstants.DEFAULT_MAP_WIDTH);
+        initData.put("mapHeight", ConfigConstants.DEFAULT_MAP_HEIGHT);
+        initData.put("carCount", 4);  // 与 Launcher MAX_CARS 保持一致
+        initData.put("obstacleDensity", ConfigConstants.DEFAULT_OBSTACLE_DENSITY);
+        initData.put("active", false);  // 不激活，等用户点 Start
+        MQMessage initMsg = new MQMessage("FORWARD_CONFIG", initData);
+        mq.sendToQueue(ConfigConstants.QUEUE_TASK_CONFIG_CMD, initMsg);
+        LOG.info("已发送自动初始化配置: {}x{}, carCount=4 (active=false，等待用户 Start)",
+                ConfigConstants.DEFAULT_MAP_WIDTH, ConfigConstants.DEFAULT_MAP_HEIGHT);
 
         // 添加关闭钩子
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
