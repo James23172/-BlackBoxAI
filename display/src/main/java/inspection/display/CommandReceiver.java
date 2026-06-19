@@ -4,6 +4,8 @@ import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.JSONObject;
 import inspection.common.client.BlackboardClient;
 import inspection.common.client.MessageBusClient;
+import inspection.common.config.ConfigConstants;
+import inspection.common.model.MQMessage;
 import inspection.common.model.Point;
 import org.java_websocket.WebSocket;
 import org.java_websocket.handshake.ClientHandshake;
@@ -86,6 +88,12 @@ public class CommandReceiver extends WebSocketServer {
                 case "ROUTE_HIDE":
                     handleRouteHide(conn);
                     break;
+                case "ADD_CAR":
+                    handleAddCar(json);
+                    break;
+                case "REMOVE_CAR":
+                    handleRemoveCar(json);
+                    break;
                 default:
                     LOG.warn("未知浏览器命令: {}", type);
             }
@@ -135,6 +143,56 @@ public class CommandReceiver extends WebSocketServer {
         blackboard.setTaskActive(false);
         blackboard.pushTask("PAUSE", (Map<String, String>) null);
         LOG.info("PAUSE: 已设置 Redis taskActive=false + 推送 taskQueue");
+    }
+
+    // ==================== 动态小车增删 ====================
+
+    private void handleAddCar(JSONObject json) {
+        String carId = json.getString("carId");
+        int x = json.getIntValue("x", 15);
+        int y = json.getIntValue("y", 15);
+
+        // 1. 发送 FORWARD_CONFIG(addCar=true) 到 TaskConfigurator
+        try {
+            JSONObject data = new JSONObject();
+            data.put("addCar", true);
+            data.put("addCarId", carId);
+            data.put("x", x);
+            data.put("y", y);
+            data.put("mapWidth", blackboard.getMapWidth());
+            data.put("mapHeight", blackboard.getMapHeight());
+            MQMessage msg = new MQMessage("FORWARD_CONFIG", data);
+            messageBus.sendToQueue(ConfigConstants.QUEUE_TASK_CONFIG_CMD, msg);
+        } catch (Exception e) {
+            LOG.error("无法发送 ADD_CAR 到 TaskConfigurator: {}", e.getMessage());
+        }
+
+        // 2. 同时 push ADD_CAR 到 taskQueue 通知 Controller
+        Map<String, String> extra = java.util.Map.of("x", String.valueOf(x), "y", String.valueOf(y));
+        blackboard.pushTask("ADD_CAR", carId, extra);
+        LOG.info("ADD_CAR: carId={}, pos=({},{}), 已推送到 taskQueue", carId, x, y);
+    }
+
+    private void handleRemoveCar(JSONObject json) {
+        String carId = json.getString("carId");
+        if (carId == null || carId.isEmpty()) {
+            LOG.warn("REMOVE_CAR: carId 为空");
+            return;
+        }
+        // 1. 通过 TaskConfigurator 增量移除
+        try {
+            JSONObject data = new JSONObject();
+            data.put("removeCar", true);
+            data.put("removeCarId", carId);
+            MQMessage msg = new MQMessage("FORWARD_CONFIG", data);
+            messageBus.sendToQueue(ConfigConstants.QUEUE_TASK_CONFIG_CMD, msg);
+        } catch (Exception e) {
+            LOG.error("无法发送 REMOVE_CAR 到 TaskConfigurator: {}", e.getMessage());
+        }
+
+        // 2. 同时 push REMOVE_CAR 到 taskQueue
+        blackboard.pushTask("REMOVE_CAR", carId, null);
+        LOG.info("REMOVE_CAR: carId={}, 已推送到 taskQueue", carId);
     }
 
     // ==================== Route Display ====================

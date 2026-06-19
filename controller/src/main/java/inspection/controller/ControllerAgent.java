@@ -38,6 +38,8 @@ public class ControllerAgent {
     private final MessageBusClient mq;
     private final ScheduledExecutorService broadcastScheduler = Executors.newSingleThreadScheduledExecutor();
     private final Object taskWakeLock = new Object();
+    private final int instanceId;
+    private final int totalInstances;
     private volatile boolean running = false;
     private volatile boolean taskActive = false;
     private volatile boolean userActivated = false;
@@ -45,8 +47,15 @@ public class ControllerAgent {
     private long tickCount = 0;
 
     public ControllerAgent(BlackboardClient bb, MessageBusClient mq) {
+        this(bb, mq, 0, 1);
+    }
+
+    public ControllerAgent(BlackboardClient bb, MessageBusClient mq,
+                           int instanceId, int totalInstances) {
         this.bb = bb;
         this.mq = mq;
+        this.instanceId = instanceId;
+        this.totalInstances = totalInstances;
     }
 
     // ==================== 启动 / 停止 ====================
@@ -155,6 +164,9 @@ public class ControllerAgent {
             return;
         }
 
+        // 多实例分片：只处理分配给本实例的车辆
+        if (!isMyCar(getAllCarIds(), carId)) return;
+
         switch (type) {
             case "ROUTE_NEEDED":
                 log.info("🎯 [ROUTE_NEEDED] 发 NAVIGATE → Navigator4CarID, carId={}", carId);
@@ -166,6 +178,15 @@ public class ControllerAgent {
                 JSONObject moveData = new JSONObject();
                 moveData.put("carId", carId);
                 sendCommand(CommandType.MOVE_STEP, moveData, ConfigConstants.carQueueName(carId));
+                break;
+
+            case "ADD_CAR":
+                log.info("➕ [ADD_CAR] 新增小车: carId={}，触发导航", carId);
+                requestNavigate(carId);
+                break;
+
+            case "REMOVE_CAR":
+                log.info("➖ [REMOVE_CAR] 移除小车: carId={}，已从系统中注销", carId);
                 break;
 
             case "BLOCKED":
@@ -192,7 +213,7 @@ public class ControllerAgent {
             JSONObject initData = new JSONObject();
             initData.put("mapWidth", bb.getMapWidth());
             initData.put("mapHeight", bb.getMapHeight());
-            initData.put("carCount", 4);
+            initData.put("carCount", Math.max(4, bb.getAllCarIds().size()));
             initData.put("obstacleDensity", ConfigConstants.DEFAULT_OBSTACLE_DENSITY);
             initData.put("routeAlgorithm", bb.getRouteAlgorithm());
             initData.put("active", true);
@@ -218,7 +239,8 @@ public class ControllerAgent {
         JSONObject data = new JSONObject();
         data.put("mapWidth", Integer.parseInt(task.getOrDefault("mapWidth", String.valueOf(ConfigConstants.DEFAULT_MAP_WIDTH))));
         data.put("mapHeight", Integer.parseInt(task.getOrDefault("mapHeight", String.valueOf(ConfigConstants.DEFAULT_MAP_HEIGHT))));
-        data.put("carCount", Integer.parseInt(task.getOrDefault("carCount", "4")));
+        data.put("carCount", Integer.parseInt(task.getOrDefault("carCount",
+                String.valueOf(Math.max(4, bb.getAllCarIds().size())))));
         data.put("obstacleDensity", Double.parseDouble(task.getOrDefault("obstacleDensity", String.valueOf(ConfigConstants.DEFAULT_OBSTACLE_DENSITY))));
         data.put("routeAlgorithm", task.getOrDefault("routeAlgorithm", "BFS"));
         data.put("active", false);
@@ -232,7 +254,8 @@ public class ControllerAgent {
         JSONObject data = new JSONObject();
         data.put("mapWidth", Integer.parseInt(task.getOrDefault("mapWidth", String.valueOf(ConfigConstants.DEFAULT_MAP_WIDTH))));
         data.put("mapHeight", Integer.parseInt(task.getOrDefault("mapHeight", String.valueOf(ConfigConstants.DEFAULT_MAP_HEIGHT))));
-        data.put("carCount", Integer.parseInt(task.getOrDefault("carCount", "4")));
+        data.put("carCount", Integer.parseInt(task.getOrDefault("carCount",
+                String.valueOf(Math.max(4, bb.getAllCarIds().size())))));
         data.put("obstacleDensity", Double.parseDouble(task.getOrDefault("obstacleDensity", String.valueOf(ConfigConstants.DEFAULT_OBSTACLE_DENSITY))));
         data.put("reset", true);
         data.put("active", false);
@@ -249,10 +272,11 @@ public class ControllerAgent {
 
         try {
             if (taskActive) {
-                // 用 unexplored:set 是否为空判定结束（精确，无浮点误差）
+                // 双保险判定：unexplored:set 为空 且 bitmap 探索率 ≥ 99.9%
+                // 防止 Redis 重启导致 unexplored:set 丢失而误判完成
                 long unexploredCount = getUnexploredCount();
                 double explored = getExploredPercent();
-                if (unexploredCount == 0) {
+                if (unexploredCount == 0 && explored >= 99.9) {
                     log.info("🏁 巡检完成！未探索格子=0, 探索率={}%", explored);
                     taskActive = false;
                     bb.setTaskActive(false);
@@ -299,6 +323,7 @@ public class ControllerAgent {
     private void fallbackBlockedCheck() {
         List<String> carIds = getAllCarIds();
         for (String carId : carIds) {
+            if (!isMyCar(carIds, carId)) continue;
             try {
                 if (bb.getCarStatus(carId) == CarStatus.BLOCKED) {
                     handleBlockedTimeout(carId);
@@ -309,10 +334,18 @@ public class ControllerAgent {
         }
     }
 
+    /** 判断一辆车是否属于当前 Controller 实例的分片 */
+    private boolean isMyCar(List<String> carIds, String carId) {
+        if (totalInstances <= 1) return true;
+        int idx = carIds.indexOf(carId);
+        return idx >= 0 && (idx % totalInstances) == instanceId;
+    }
+
     /** 每个 tick 推进所有 IDLE 且有剩余路径的小车（每车每 tick 最多 1 步） */
     private void tickDriveCars() {
         List<String> carIds = getAllCarIds();
         for (String carId : carIds) {
+            if (!isMyCar(carIds, carId)) continue;
             try {
                 if (bb.getCarStatus(carId) != CarStatus.IDLE) continue;
                 Point next = bb.peekNextStep(carId);
@@ -335,6 +368,8 @@ public class ControllerAgent {
     }
 
     private void broadcastViewRefresh() {
+        // 仅 instance 0 负责广播，避免多 Controller 重复发送
+        if (instanceId != 0) return;
         JSONObject data = new JSONObject();
         data.put("tick", tickCount);
         sendCommand(CommandType.REFRESH_ALL, data, ConfigConstants.EXCHANGE_UPDATE_VIEW, true);

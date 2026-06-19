@@ -64,18 +64,9 @@ public class StateBroadcaster {
         List<Point> obstacles = blackboard.getAllBlocked();
 
         List<CarState> carStates = new ArrayList<>();
-        int carCount = 1;
-        try {
-            Map<String, String> config = blackboard.getTaskConfig();
-            if (config != null && !config.isEmpty()) {
-                carCount = Integer.parseInt(config.getOrDefault("carCount", "1"));
-            }
-        } catch (Exception e) {
-            carCount = 1;
-        }
-
-        for (int i = 1; i <= carCount; i++) {
-            String carId = String.format("Car%03d", i);
+        // 动态获取所有已注册的小车 ID（支持运行时增减）
+        List<String> carIds = blackboard.getAllCarIds();
+        for (String carId : carIds) {
             CarState cs = new CarState(carId);
             cs.setStatus(blackboard.getCarStatus(carId));
             cs.setPosition(blackboard.getCarPosition(carId));

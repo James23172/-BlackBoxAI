@@ -26,11 +26,19 @@ public class DisplayMain {
     public static void main(String[] args) throws Exception {
         int wsPort = 8887;
         int httpPort = 8888;
+        int carCount = 4;
 
-        // 解析 --port 参数
+        // 解析命令行参数
         for (int i = 0; i < args.length; i++) {
             if ("--port".equals(args[i]) && i + 1 < args.length) {
                 wsPort = Integer.parseInt(args[i + 1]);
+                httpPort = wsPort + 1;
+            } else if ("--ws-port".equals(args[i]) && i + 1 < args.length) {
+                wsPort = Integer.parseInt(args[i + 1]);
+            } else if ("--http-port".equals(args[i]) && i + 1 < args.length) {
+                httpPort = Integer.parseInt(args[i + 1]);
+            } else if ("--car-count".equals(args[i]) && i + 1 < args.length) {
+                carCount = Integer.parseInt(args[i + 1]);
             }
         }
 
@@ -67,13 +75,13 @@ public class DisplayMain {
         JSONObject initData = new JSONObject();
         initData.put("mapWidth", ConfigConstants.DEFAULT_MAP_WIDTH);
         initData.put("mapHeight", ConfigConstants.DEFAULT_MAP_HEIGHT);
-        initData.put("carCount", 4);  // 与 Launcher MAX_CARS 保持一致
+        initData.put("carCount", carCount);
         initData.put("obstacleDensity", ConfigConstants.DEFAULT_OBSTACLE_DENSITY);
         initData.put("active", false);  // 不激活，等用户点 Start
         MQMessage initMsg = new MQMessage("FORWARD_CONFIG", initData);
         mq.sendToQueue(ConfigConstants.QUEUE_TASK_CONFIG_CMD, initMsg);
-        LOG.info("已发送自动初始化配置: {}x{}, carCount=4 (active=false，等待用户 Start)",
-                ConfigConstants.DEFAULT_MAP_WIDTH, ConfigConstants.DEFAULT_MAP_HEIGHT);
+        LOG.info("已发送自动初始化配置: {}x{}, carCount={} (active=false，等待用户 Start)",
+                ConfigConstants.DEFAULT_MAP_WIDTH, ConfigConstants.DEFAULT_MAP_HEIGHT, carCount);
 
         // 添加关闭钩子
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {

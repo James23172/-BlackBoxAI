@@ -21,7 +21,9 @@ public class Launcher {
     private static final File PROJECT_ROOT = detectProjectRoot();
     private static final String M2 = System.getProperty("user.home") + "\\.m2\\repository";
     private static final List<Process> processes = new ArrayList<>();
-    private static final int MAX_CARS = 4;  // 默认最大小车进程数
+    private static int carCount = 4;            // --cars N
+    private static int controllerInstances = 1; // --controller-instances N
+    private static int displayHttpPort = 8888; // --display-http-port N
 
     private static String detectJava() {
         String jh = System.getProperty("java.home");
@@ -52,9 +54,18 @@ public class Launcher {
 
     public static void main(String[] args) throws Exception {
         System.out.println("========================================");
-        System.out.println("  BlackBoxAI 一键启动器 v2");
+        System.out.println("  BlackBoxAI 一键启动器 v3");
         System.out.println("  项目路径: " + PROJECT_ROOT.getAbsolutePath());
         System.out.println("========================================");
+
+        // 解析 CLI 参数
+        for (int i = 0; i < args.length; i++) {
+            switch (args[i]) {
+                case "--cars": carCount = Integer.parseInt(args[++i]); break;
+                case "--controller-instances": controllerInstances = Integer.parseInt(args[++i]); break;
+                case "--display-http-port": displayHttpPort = Integer.parseInt(args[++i]); break;
+            }
+        }
 
         // Step 1: 自动编译
         long t0 = System.currentTimeMillis();
@@ -76,17 +87,28 @@ public class Launcher {
         launch("Navigator", "navigator",
                 "inspection.navigator.NavigatorMain", commonClasses, 2000);
 
+        launch("TargetPlanner", "target-planner",
+                "inspection.targetplanner.TargetPlannerMain", commonClasses, 1500);
+
         // 启动多个 Car 进程（Car001 ~ Car004）
-        for (int i = 1; i <= MAX_CARS; i++) {
+        for (int i = 1; i <= carCount; i++) {
             String carId = String.format("Car%03d", i);
             launchCar(carId, commonClasses, 800);
         }
 
-        launch("Controller", "controller",
-                "inspection.controller.ControllerMain", commonClasses, 2000);
+        // 启动 Display（可选多实例）
+        launchWithArgs("Display", "display",
+                "inspection.display.DisplayMain", commonClasses, 3000,
+                "--http-port", String.valueOf(displayHttpPort),
+                "--car-count", String.valueOf(carCount));
 
-        launch("Display", "display",
-                "inspection.display.DisplayMain", commonClasses, 3000);  // 增加 Display 启动等待
+        // 启动 Controller（支持多实例）
+        for (int i = 0; i < controllerInstances; i++) {
+            launchWithArgs("Controller" + (controllerInstances > 1 ? "-" + (i + 1) : ""), "controller",
+                    "inspection.controller.ControllerMain", commonClasses, 1500,
+                    "--instance-id", String.valueOf(i),
+                    "--total-instances", String.valueOf(controllerInstances));
+        }
 
         // 等待 Display HTTP 服务器就绪
         Thread.sleep(1000);
@@ -94,12 +116,12 @@ public class Launcher {
         long elapsed = (System.currentTimeMillis() - t0) / 1000;
         System.out.println("\n========================================");
         System.out.println("  全部模块已启动！(耗时 " + elapsed + "s)");
-        System.out.println("  浏览器打开: http://localhost:8888");
+        System.out.println("  浏览器打开: http://localhost:" + displayHttpPort);
         System.out.println("  按 Ctrl+C 停止所有模块");
         System.out.println("========================================\n");
 
         // 自动打开浏览器
-        openBrowser("http://localhost:8888");
+        openBrowser("http://localhost:" + displayHttpPort);
 
         // Ctrl+C 一键停止
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
@@ -118,7 +140,7 @@ public class Launcher {
     private static boolean autoCompile() {
         // 检查所有模块是否已编译（而非仅 common 模块）
         File pomFile = new File(PROJECT_ROOT, "pom.xml");
-        String[] modules = {"common", "controller", "car", "navigator", "task-configurator", "display"};
+        String[] modules = {"common", "controller", "car", "navigator", "target-planner", "task-configurator", "display"};
         boolean allCompiled = true;
         for (String m : modules) {
             File classesDir = new File(PROJECT_ROOT, m + "\\target\\classes");
@@ -173,10 +195,16 @@ public class Launcher {
 
     private static void launch(String name, String module, String mainClass,
                                 String commonClassesDir, long delayMs) throws Exception {
+        launchWithArgs(name, module, mainClass, commonClassesDir, delayMs);
+    }
+
+    private static void launchWithArgs(String name, String module, String mainClass,
+                                        String commonClassesDir, long delayMs,
+                                        String... extraArgs) throws Exception {
         String classesDir = new File(PROJECT_ROOT, module + "\\target\\classes").getAbsolutePath();
         String cp = buildClasspath(commonClassesDir, classesDir, module);
 
-        Process p = startProcess(name, mainClass, cp);
+        Process p = startProcess(name, mainClass, cp, extraArgs);
         waitAndReport(name, p, delayMs);
     }
 
@@ -200,12 +228,20 @@ public class Launcher {
         waitAndReport("Car:" + carId, p, delayMs);
     }
 
-    private static Process startProcess(String name, String mainClass, String cp) throws Exception {
-        ProcessBuilder pb = new ProcessBuilder(JAVA,
-                "-Dfile.encoding=UTF-8",           // 统一 JVM 默认编码
-                "-Dsun.stdout.encoding=UTF-8",     // 强制 stdout 使用 UTF-8（Windows 下避免 GBK 乱码）
-                "-Dsun.stderr.encoding=UTF-8",     // 强制 stderr 使用 UTF-8
-                "-cp", cp, mainClass);
+    private static Process startProcess(String name, String mainClass, String cp,
+                                         String... extraArgs) throws Exception {
+        List<String> cmd = new ArrayList<>();
+        cmd.add(JAVA);
+        cmd.add("-Dfile.encoding=UTF-8");
+        cmd.add("-Dsun.stdout.encoding=UTF-8");
+        cmd.add("-Dsun.stderr.encoding=UTF-8");
+        cmd.add("-cp");
+        cmd.add(cp);
+        cmd.add(mainClass);
+        if (extraArgs != null) {
+            for (String a : extraArgs) cmd.add(a);
+        }
+        ProcessBuilder pb = new ProcessBuilder(cmd);
         pb.directory(PROJECT_ROOT);
         pb.redirectOutput(ProcessBuilder.Redirect.PIPE);
         pb.redirectError(ProcessBuilder.Redirect.PIPE);

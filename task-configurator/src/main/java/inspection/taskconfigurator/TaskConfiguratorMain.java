@@ -90,6 +90,33 @@ public class TaskConfiguratorMain {
 
         JSONObject data = JSONObject.parseObject(JSON.toJSONString(msg.getData()));
 
+        // ──── 增量添加小车（不 flushDB） ────
+        boolean addCar = data.getBooleanValue("addCar", false);
+        if (addCar) {
+            String carId = data.getString("addCarId");
+            int cx = data.getIntValue("x", ConfigConstants.DEFAULT_MAP_WIDTH / 2);
+            int cy = data.getIntValue("y", ConfigConstants.DEFAULT_MAP_HEIGHT / 2);
+            if (carId != null && !carId.isEmpty()) {
+                blackboard.addCar(carId, cx, cy);
+                try { messageBus.getChannel().queueDeclare(
+                        ConfigConstants.carQueueName(carId), true, false, false, null);
+                } catch (IOException e) { LOG.error("声明 {} 队列失败", carId, e); }
+                LOG.info("增量添加小车完成: carId={}, position=({},{})", carId, cx, cy);
+            }
+            return;
+        }
+
+        // ──── 增量移除小车（不 flushDB） ────
+        boolean removeCar = data.getBooleanValue("removeCar", false);
+        if (removeCar) {
+            String carId = data.getString("removeCarId");
+            if (carId != null && !carId.isEmpty()) {
+                blackboard.removeCar(carId);
+                LOG.info("增量移除小车完成: carId={}", carId);
+            }
+            return;
+        }
+
         int mapWidth = data.getIntValue("mapWidth", ConfigConstants.DEFAULT_MAP_WIDTH);
         int mapHeight = data.getIntValue("mapHeight", ConfigConstants.DEFAULT_MAP_HEIGHT);
         int carCount = data.getIntValue("carCount", 1);

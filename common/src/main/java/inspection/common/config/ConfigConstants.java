@@ -23,6 +23,8 @@ public final class ConfigConstants {
     // ==================== MQ 队列名称 ====================
     /** Navigator 共享竞争队列：接收导航请求 */
     public static final String QUEUE_NAVIGATOR_4_CAR_ID = "Navigator4CarID";
+    /** TargetPlanner 共享竞争队列：接收目标选择请求（可 1~N 实例） */
+    public static final String QUEUE_TARGET_PLANNER_CMD = "TargetPlannerCmd";
     /** TaskConfigurator 订阅：接收配置请求 */
     public static final String QUEUE_TASK_CONFIG_CMD = "TaskConfigCmd";
 
@@ -58,7 +60,8 @@ public final class ConfigConstants {
     public static final String KEY_LOCK_CONTROLLER = "lock:controller";
     /** 未探索坐标索引 Set key（Navigator/TargetPlanner O(1) 随机选取） */
     public static final String KEY_UNEXPLORED_SET = "unexplored:set";
-    /** 目标分配全局互斥锁（防止多车选同一目标） */
+    /** @deprecated 目标分配已由 TargetPlanner 模块接管，无全局锁 */
+    @Deprecated
     public static final String KEY_LOCK_TARGET_ALLOCATION = "lock:target_allocation";
     /** Bitmap 版本号 key（用于跨进程缓存失效检测） */
     public static final String KEY_MAP_VIEW_VERSION = "map:view:version";

@@ -93,6 +93,7 @@ public class MessageBusClient {
      */
     public void declareAllSystemQueues() throws IOException {
         declareQueue(ConfigConstants.QUEUE_NAVIGATOR_4_CAR_ID);
+        declareQueue(ConfigConstants.QUEUE_TARGET_PLANNER_CMD);
         declareQueue(ConfigConstants.QUEUE_TASK_CONFIG_CMD);
         // 声明所有可能的小车队列（Car:001 ~ Car:004）
         for (int i = 1; i <= 4; i++) {

@@ -1,10 +1,12 @@
 package inspection.car;
 
+import com.alibaba.fastjson2.JSONObject;
 import inspection.common.client.BlackboardClient;
 import inspection.common.client.DistributedLock;
 import inspection.common.client.MessageBusClient;
 import inspection.common.config.ConfigConstants;
 import inspection.common.enums.CarStatus;
+import inspection.common.enums.CommandType;
 import inspection.common.model.Point;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -21,6 +23,7 @@ public class CarAgent {
 
     private final String carId;
     private final BlackboardClient bb;
+    private final MessageBusClient mq;
     private final Illuminator illuminator;
     private final DynamicObstacleManager obstacleManager;
     private final AtomicLong currentTick = new AtomicLong(0);
@@ -28,6 +31,7 @@ public class CarAgent {
     public CarAgent(String carId, BlackboardClient bb, MessageBusClient mq) {
         this.carId = carId;
         this.bb = bb;
+        this.mq = mq;
         this.illuminator = new Illuminator(bb);
         this.obstacleManager = new DynamicObstacleManager(bb);
     }
@@ -74,6 +78,9 @@ public class CarAgent {
             log.info("[Car:{}] 💡 illuminate({},{})", carId, next.x, next.y);
             bb.incrementCarSteps(carId);
 
+            // 移动 + 点亮后立即触发 Display 刷新（消除 500ms 广播延迟）
+            triggerImmediateRefresh();
+
             // 两步前瞻
             Point stillNext = bb.peekNextStep(carId);
             if (stillNext != null) {
@@ -108,6 +115,22 @@ public class CarAgent {
         bb.clearRoute(carId);
         bb.pushTask("ROUTE_NEEDED", carId, null);
         log.info("[Car:{}] 路径完成 → IDLE, 已入队ROUTE_NEEDED", carId);
+    }
+
+    /** 小车移动+点亮后立即通过 Fanout Exchange 触发 Display 刷新，消除广播周期延迟 */
+
+    private void triggerImmediateRefresh() {
+        try {
+            JSONObject data = new JSONObject();
+            data.put("tick", currentTick.get());
+            JSONObject msg = new JSONObject();
+            msg.put("cmd", CommandType.REFRESH_ALL.name());
+            msg.put("data", data);
+            msg.put("timestamp", System.currentTimeMillis());
+            mq.fanoutPublish(ConfigConstants.EXCHANGE_UPDATE_VIEW, msg.toJSONString());
+        } catch (Exception e) {
+            log.debug("[Car:{}] 即时刷新发送失败（不影响移动）: {}", carId, e.getMessage());
+        }
     }
 
     public String getCarId() { return carId; }

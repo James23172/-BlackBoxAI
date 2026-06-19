@@ -203,7 +203,8 @@ public class BlackboardClient {
                 for (int dx = -r; dx <= r; dx++) {
                     int nx = cx + dx;
                     int ny = cy + dy;
-                    if (nx >= 0 && nx < mapWidth && ny >= 0 && ny < mapHeight) {
+                    if (nx >= 0 && nx < mapWidth && ny >= 0 && ny < mapHeight
+                            && !isBlocked(nx, ny)) {  // 障碍物不计入已探索，避免探索率超100%
                         pipeline.setbit(ConfigConstants.KEY_MAP_VIEW, bitmapOffset(nx, ny), true);
                         pipeline.srem(ConfigConstants.KEY_UNEXPLORED_SET, nx + "," + ny);
                     }
@@ -491,6 +492,73 @@ public class BlackboardClient {
         return Collections.singletonList(ConfigConstants.CAR_ID);
     }
 
+    // ==================== 动态小车管理 ====================
+
+    /**
+     * 增量添加小车（不触发 flushDB，保持探索状态）
+     * @param carId 小车 ID (e.g., "Car005")
+     * @param x     X 坐标
+     * @param y     Y 坐标
+     */
+    public void addCar(String carId, int x, int y) {
+        try (Jedis jedis = pool.getResource()) {
+            jedis.hset(ConfigConstants.carPositionKey(carId), "x", String.valueOf(x));
+            jedis.hset(ConfigConstants.carPositionKey(carId), "y", String.valueOf(y));
+            jedis.set(ConfigConstants.carStatusKey(carId), CarStatus.IDLE.name());
+            jedis.set(ConfigConstants.carStepsKey(carId), "0");
+
+            // 更新 config:task 中的 cars 列表
+            String carsJson = jedis.hget(ConfigConstants.KEY_TASK_CONFIG, "cars");
+            List<String> cars;
+            if (carsJson != null && !carsJson.isEmpty()) {
+                cars = new ArrayList<>(JSON.parseArray(carsJson, String.class));
+            } else {
+                cars = new ArrayList<>();
+            }
+            if (!cars.contains(carId)) {
+                cars.add(carId);
+                jedis.hset(ConfigConstants.KEY_TASK_CONFIG, "cars", JSON.toJSONString(cars));
+            }
+
+            // 点亮出生点
+            illuminateArea(x, y);
+            // 推 ROUTE_NEEDED 触发导航
+            pushTask("ROUTE_NEEDED", carId, null);
+            log.info("已增量添加小车: carId={}, position=({},{})", carId, x, y);
+        }
+    }
+
+    /**
+     * 增量移除小车（不触发 flushDB，保持其他小车状态）
+     * @param carId 小车 ID
+     */
+    public void removeCar(String carId) {
+        try (Jedis jedis = pool.getResource()) {
+            // 清理当前位置的动态障碍物标记
+            Point pos = getCarPosition(carId);
+            if (pos != null) {
+                jedis.setbit(ConfigConstants.KEY_MAP_BLOCKED, (long) pos.y * getMapWidth() + pos.x, false);
+            }
+            // 删除所有 car:{id}:* 键
+            jedis.del(ConfigConstants.carStatusKey(carId));
+            jedis.del(ConfigConstants.carPositionKey(carId));
+            jedis.del(ConfigConstants.carStepsKey(carId));
+            jedis.del(ConfigConstants.carTargetKey(carId));
+            jedis.del(ConfigConstants.carRouteKey(carId));
+            jedis.del(ConfigConstants.carBlockedTickKey(carId));
+            // 删除锁键（可能残留）
+            jedis.del(ConfigConstants.carLockKey(carId));
+            // 从 cars 列表中移除
+            String carsJson = jedis.hget(ConfigConstants.KEY_TASK_CONFIG, "cars");
+            if (carsJson != null && !carsJson.isEmpty()) {
+                List<String> cars = new ArrayList<>(JSON.parseArray(carsJson, String.class));
+                cars.remove(carId);
+                jedis.hset(ConfigConstants.KEY_TASK_CONFIG, "cars", JSON.toJSONString(cars));
+            }
+            log.info("已移除小车: carId={}", carId);
+        }
+    }
+
     /** 获取路径规划算法名 */
     public String getRouteAlgorithm() {
         try (Jedis jedis = pool.getResource()) {
@@ -588,7 +656,10 @@ public class BlackboardClient {
         return new DistributedLock(pool, ConfigConstants.KEY_LOCK_CONTROLLER);
     }
 
-    /** 目标分配全局互斥锁（防止多车选同一目标） */
+    /**
+     * @deprecated 目标分配已由 TargetPlanner 模块接管，无全局锁
+     */
+    @Deprecated
     public DistributedLock getTargetAllocationLock() {
         return new DistributedLock(pool, ConfigConstants.KEY_LOCK_TARGET_ALLOCATION);
     }
