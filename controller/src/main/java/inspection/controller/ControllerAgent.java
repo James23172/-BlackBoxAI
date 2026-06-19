@@ -180,11 +180,14 @@ public class ControllerAgent {
     // ==================== 全局任务处理 (START/PAUSE/SET_CONFIG/RESET) ====================
 
     private void handleStartTask() {
-        long queueLen = bb.getTaskQueueLength();
-        log.info("🚀 Start: taskQueue长度={}, redisTaskActive={}, 当前taskActive={}",
-                queueLen, bb.isTaskActive(), taskActive);
-        if (queueLen == 0) {
-            log.warn("⚠️ taskQueue 为空，触发完整初始化");
+        // 检查 Redis 中是否已有任务配置（而非靠 queueLen 计数，因为 START 本身刚被出队）
+        Map<String, String> existingConfig = bb.getTaskConfig();
+        boolean hasConfig = existingConfig != null && !existingConfig.isEmpty();
+        log.info("🚀 Start: hasConfig={}, redisTaskActive={}, 当前taskActive={}",
+                hasConfig, bb.isTaskActive(), taskActive);
+        if (!hasConfig) {
+            // 从未初始化过 → 触发完整初始化（TaskConfigurator 生成地图/障碍物/放置小车）
+            log.warn("⚠️ 配置不存在，触发完整初始化");
             userActivated = true;
             JSONObject initData = new JSONObject();
             initData.put("mapWidth", bb.getMapWidth());
@@ -196,6 +199,7 @@ public class ControllerAgent {
             taskActive = false;
             sendCommand(CommandType.FORWARD_CONFIG, initData, ConfigConstants.QUEUE_TASK_CONFIG_CMD);
         } else {
+            // 配置已存在 → 直接激活，不重新生成地图
             userActivated = true;
             bb.setTaskActive(true);
             taskActive = true;

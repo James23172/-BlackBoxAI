@@ -134,6 +134,8 @@ public class MessageBusClient {
      */
     public void sendRaw(String queueName, String json) {
         try {
+            // 兜底声明队列（持久化），防止 RabbitMQ 重启后队列丢失导致消息静默丢弃
+            channel.queueDeclare(queueName, true, false, false, null);
             channel.basicPublish("", queueName,
                     MessageProperties.PERSISTENT_TEXT_PLAIN,
                     json.getBytes(StandardCharsets.UTF_8));

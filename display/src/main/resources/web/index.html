@@ -387,8 +387,8 @@
 </head>
 <body>
     <div class="header">
-        <h1>Multi-Robot Collaborative Inspection</h1>
-        <span id="connStatus" class="connection-status disconnected">Disconnected</span>
+        <h1>多机器人协同巡检</h1>
+        <span id="connStatus" class="connection-status disconnected">未连接</span>
     </div>
 
     <div class="main-container">
@@ -397,26 +397,26 @@
         </div>
 
         <div class="control-panel">
-            <h3>Control Panel</h3>
+            <h3>控制面板</h3>
 
             <div class="control-group">
-                <label>Map Width</label>
+                <label>地图宽度</label>
                 <input type="number" id="mapWidth" value="30" min="10" max="80">
             </div>
             <div class="control-group">
-                <label>Map Height</label>
+                <label>地图高度</label>
                 <input type="number" id="mapHeight" value="30" min="10" max="80">
             </div>
             <div class="control-group">
-                <label>Car Count</label>
+                <label>小车数量</label>
                 <input type="number" id="carCount" value="4" min="1" max="4">
             </div>
             <div class="control-group">
-                <label>Obstacle Density (0.0 ~ 1.0)</label>
+                <label>障碍物密度 (0.0 ~ 1.0)</label>
                 <input type="number" id="obstacleDensity" value="0.1" min="0" max="1" step="0.05">
             </div>
             <div class="control-group" style="display:none">
-                <label>Route Algorithm</label>
+                <label>路径算法</label>
                 <select id="routeAlgorithm">
                     <option value="BFS">BFS (加权贪心)</option>
                 </select>
@@ -424,68 +424,68 @@
 
             <!-- 路由显示开关 -->
             <div class="toggle-group">
-                <span>Route Display</span>
+                <span>路径显示</span>
                 <label class="toggle-switch">
                     <input type="checkbox" id="routeToggle" onchange="toggleRouteDisplay()">
                     <span class="toggle-slider"></span>
                 </label>
             </div>
-            <div class="selected-car-info" id="selectedCarInfo">Click car on map to view route</div>
+            <div class="selected-car-info" id="selectedCarInfo">点击地图上的小车查看路径</div>
 
             <div class="btn-group">
-                <button class="btn btn-start" id="btnApplyCfg" onclick="sendCommand('SET_CONFIG')" style="background: linear-gradient(135deg, #2563eb, #60a5fa);">Apply Config</button>
+                <button class="btn btn-start" id="btnApplyCfg" onclick="sendCommand('SET_CONFIG')" style="background: linear-gradient(135deg, #2563eb, #60a5fa);">应用配置</button>
             </div>
             <div class="btn-group">
-                <button class="btn btn-start" id="btnStart" onclick="sendCommand('START')">Start</button>
-                <button class="btn btn-pause" id="btnPause" onclick="sendCommand('PAUSE')">Pause</button>
-                <button class="btn btn-reset" id="btnReset" onclick="sendCommand('RESET')">Reset</button>
+                <button class="btn btn-start" id="btnStart" onclick="sendCommand('START')">开始</button>
+                <button class="btn btn-pause" id="btnPause" onclick="sendCommand('PAUSE')">暂停</button>
+                <button class="btn btn-reset" id="btnReset" onclick="sendCommand('RESET')">重置</button>
             </div>
 
             <div class="stats">
                 <div class="stat">
-                    <span class="stat-label">Exploration Rate</span>
+                    <span class="stat-label">探索率</span>
                     <span class="stat-value" id="exploreRate">0.00%</span>
                 </div>
                 <div class="stat">
-                    <span class="stat-label">Task Status</span>
-                    <span class="stat-value" id="taskStatus">Inactive</span>
+                    <span class="stat-label">任务状态</span>
+                    <span class="stat-value" id="taskStatus">未激活</span>
                 </div>
                 <div class="stat" id="carStatusRow">
-                    <span class="stat-label">Car Status</span>
+                    <span class="stat-label">小车状态</span>
                     <span class="stat-value" id="carStatus">-</span>
                 </div>
                 <div class="stat" id="carStepsRow">
-                    <span class="stat-label">Car Steps</span>
+                    <span class="stat-label">小车步数</span>
                     <span class="stat-value" id="carSteps">0</span>
                 </div>
                 <div class="stat" id="carPosRow">
-                    <span class="stat-label">Car Position</span>
+                    <span class="stat-label">小车位置</span>
                     <span class="stat-value" id="carPos">-</span>
                 </div>
             </div>
 
-            <div class="completed-badge" id="completedBadge">Inspection Complete!</div>
+            <div class="completed-badge" id="completedBadge">巡检完成！</div>
 
             <div class="legend">
-                <h4>Legend</h4>
+                <h4>图例</h4>
                 <div class="legend-grid">
                     <div class="legend-item">
-                        <div class="legend-color" style="background:#1a2436;"></div>Unexplored
+                        <div class="legend-color" style="background:#1a2436;"></div>未探索
                     </div>
                     <div class="legend-item">
-                        <div class="legend-color" style="background:#1e4d3a;"></div>Explored
+                        <div class="legend-color" style="background:#1e4d3a;"></div>已探索
                     </div>
                     <div class="legend-item">
-                        <div class="legend-color" style="background:#5c3d2e;"></div>Obstacle
+                        <div class="legend-color" style="background:#5c3d2e;"></div>障碍物
                     </div>
                     <div class="legend-item">
-                        <div class="legend-color" style="background:#2196F3;"></div>IDLE
+                        <div class="legend-color" style="background:#2196F3;"></div>空闲
                     </div>
                     <div class="legend-item">
-                        <div class="legend-color" style="background:#8BC34A;"></div>MOVING
+                        <div class="legend-color" style="background:#8BC34A;"></div>移动中
                     </div>
                     <div class="legend-item">
-                        <div class="legend-color" style="background:#F44336;"></div>BLOCKED
+                        <div class="legend-color" style="background:#F44336;"></div>阻塞
                     </div>
                 </div>
             </div>
@@ -522,14 +522,14 @@
         ws.onopen = function() {
             console.log('WebSocket connected');
             var el = document.getElementById('connStatus');
-            el.textContent = 'Connected';
+            el.textContent = '已连接';
             el.className = 'connection-status connected';
         };
 
         ws.onclose = function() {
             console.log('WebSocket disconnected');
             var el = document.getElementById('connStatus');
-            el.textContent = 'Disconnected';
+            el.textContent = '未连接';
             el.className = 'connection-status disconnected';
             setTimeout(connectWebSocket, 3000);
         };
@@ -613,7 +613,7 @@
             var dy = my - cy;
             if (dx * dx + dy * dy <= radius * radius) {
                 selectedCarId = car.carId;
-                document.getElementById('selectedCarInfo').textContent = 'Selected: ' + car.carId;
+                document.getElementById('selectedCarInfo').textContent = '已选中: ' + car.carId;
                 if (routeDisplay) {
                     requestRoute(car.carId);
                 }
@@ -624,7 +624,7 @@
         // 点击空白 → 取消选中
         selectedCarId = null;
         routeData = null;
-        document.getElementById('selectedCarInfo').textContent = 'Click car on map to view route';
+        document.getElementById('selectedCarInfo').textContent = '点击地图上的小车查看路径';
         if (routeDisplay) {
             ws.send(JSON.stringify({ type: 'ROUTE_HIDE' }));
         }
@@ -782,7 +782,7 @@
         // 更新统计信息
         var rate = (state.exploredRate * 100).toFixed(2);
         document.getElementById('exploreRate').textContent = rate + '%';
-        document.getElementById('taskStatus').textContent = state.taskActive ? 'Active' : 'Inactive';
+        document.getElementById('taskStatus').textContent = state.taskActive ? '运行中' : '未激活';
 
         var carList = state.cars || [];
         if (carList.length > 0) {
@@ -811,7 +811,7 @@
     var _startDebounce = false;
     function sendCommand(type) {
         if (!ws || ws.readyState !== WebSocket.OPEN) {
-            alert('WebSocket not connected!');
+            alert('WebSocket 未连接!');
             return;
         }
 
@@ -848,7 +848,7 @@
     ctx.font = '16px Inter, Segoe UI, Microsoft YaHei, sans-serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText('Connecting...', 300, 300);
+    ctx.fillText('连接中...', 300, 300);
     </script>
 </body>
 </html>

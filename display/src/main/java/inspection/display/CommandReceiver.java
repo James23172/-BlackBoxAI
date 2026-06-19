@@ -109,6 +109,9 @@ public class CommandReceiver extends WebSocketServer {
     }
 
     private void handleReset(JSONObject json) {
+        // 1. 唤醒 Controller（否则 taskActive=false 时 Controller 不消费 taskQueue）
+        blackboard.setTaskActive(true);
+        // 2. 推送 RESET 任务到 taskQueue
         Map<String, String> task = new LinkedHashMap<>();
         task.put("type", "RESET");
         task.put("mapWidth", String.valueOf(json.getIntValue("mapWidth")));
@@ -116,7 +119,7 @@ public class CommandReceiver extends WebSocketServer {
         task.put("carCount", String.valueOf(json.getIntValue("carCount")));
         task.put("obstacleDensity", String.valueOf(json.getDoubleValue("obstacleDensity")));
         blackboard.pushTask("RESET", task);
-        LOG.info("推送 RESET → taskQueue: {}x{}, carCount={}",
+        LOG.info("RESET: 已设置 Redis taskActive=true + 推送 taskQueue: {}x{}, carCount={}",
                 task.get("mapWidth"), task.get("mapHeight"), task.get("carCount"));
     }
 
