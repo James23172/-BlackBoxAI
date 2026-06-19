@@ -23,6 +23,7 @@ import java.util.List;
  * GET /api/replay/list               → 返回快照数量
  * GET /api/replay/snapshot/{index}   → 返回第N帧完整状态
  * GET /api/replay/metrics            → 返回性能数据
+ * GET /api/replay/snapshots?from=N&to=M → 返回批量快照
  */
 public class ReplayMain {
     private static final Logger log = LoggerFactory.getLogger(ReplayMain.class);
@@ -41,6 +42,7 @@ public class ReplayMain {
         server.createContext("/api/replay/list", new ListHandler());
         server.createContext("/api/replay/snapshot/", new SnapshotHandler());
         server.createContext("/api/replay/metrics", new MetricsHandler());
+        server.createContext("/api/replay/snapshots", new BatchHandler());
         server.setExecutor(null);
         server.start();
         log.info("ReplayServer 已启动，端口: {}", httpPort);
@@ -72,6 +74,26 @@ public class ReplayMain {
         public void handle(HttpExchange ex) throws IOException {
             List<String> data = jedis.lrange("analysis:metrics", -100, -1);
             send(ex, 200, JSON.toJSONString(data));
+        }
+    }
+
+    static class BatchHandler implements HttpHandler {
+        public void handle(HttpExchange ex) throws IOException {
+            String query = ex.getRequestURI().getQuery();
+            int from = 0, to = 99;
+            if (query != null) {
+                for (String p : query.split("&")) {
+                    if (p.startsWith("from=")) from = Integer.parseInt(p.substring(5));
+                    else if (p.startsWith("to=")) to = Integer.parseInt(p.substring(3));
+                }
+            }
+            java.util.List<String> result = new java.util.ArrayList<>();
+            for (int i = from; i <= to && i < 100000; i++) {
+                String json = jedis.lindex("replay:snapshots", i);
+                if (json == null) break;
+                result.add(json);
+            }
+            send(ex, 200, JSON.toJSONString(result));
         }
     }
 
