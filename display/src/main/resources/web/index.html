@@ -300,8 +300,11 @@ function buildPanel(role) {
                 row([f('小车数量','carCount','4','number',1,20),f('障碍物密度','obstacleDensity','0.1','number',0,1,0.05)]),
                 '<div style="font-size:10px;color:var(--text3);margin-bottom:6px">右键点击地图格子切换障碍物</div>'
             ]) +
+            section('障碍物编辑',[
+                '<button class="btn btn-full" onclick="ws.send(JSON.stringify({type:\'RANDOM_OBSTACLES\'}))" style="background:linear-gradient(135deg,#d97706,#f59e0b);color:#1a1a1a">🎲 随机生成障碍物</button>'
+            ]) +
             section('任务控制',[
-                '<div class="btn-row"><button class="btn btn-start" id="btnStart" onclick="sendCmd(\'START\')">▶ 开始</button><button class="btn btn-pause" id="btnPause" onclick="sendCmd(\'PAUSE\')">⏸ 暂停</button><button class="btn btn-reset" id="btnReset" onclick="sendCmd(\'RESET\')">↺ 重置</button></div>',
+                '<div class="btn-row"><button class="btn btn-start" id="btnStart" onclick="sendCmd(\'START\', \'global\')">▶ 全局开始</button><button class="btn btn-pause" id="btnPause" onclick="sendCmd(\'PAUSE\', \'global\')">⏸ 全局暂停</button><button class="btn btn-reset" id="btnReset" onclick="sendCmd(\'RESET\', \'global\')">↺ 全局重置</button></div>',
                 '<button class="btn btn-full" onclick="addCar()" style="margin-top:8px;background:linear-gradient(135deg,#7c3aed,#a78bfa)">➕ 添加小车</button>'
             ]) +
             section('运行状态',[
@@ -313,7 +316,8 @@ function buildPanel(role) {
             section('用户管理',[
                 '<div class="reg-row"><input type="text" id="regUser" placeholder="用户名"><input type="password" id="regPass" placeholder="密码"><select id="regRole"><option value="operator">运行员</option><option value="analyst">分析员</option></select></div>',
                 '<button class="btn btn-full" onclick="doRegister()" style="background:linear-gradient(135deg,#2563eb,#6366f1)">➕ 创建用户</button>',
-                '<div class="reg-msg" id="regMsg"></div>'
+                '<div class="reg-msg" id="regMsg"></div>',
+                '<table class="user-table" id="userTable"><tbody><tr><td style="color:var(--text3)">加载中...</td></tr></tbody></table>'
             ]) +
             section('图例',[legendHtml()]);
     } else if (role === 'operator') {
@@ -429,9 +433,9 @@ function connectWebSocket() {
     };
 }
 
-function sendCmd(type) {
+function sendCmd(type, scope) {
     if (!ws || ws.readyState !== WebSocket.OPEN) { alert('WebSocket未连接!'); return; }
-    var msg = { type: type };
+    var msg = { type: type, scope: scope || 'global' };
     if (type === 'RESET') {
         msg.mapWidth = parseInt((document.getElementById('mapWidth')||{}).value) || 40;
         msg.mapHeight = parseInt((document.getElementById('mapHeight')||{}).value) || 40;
@@ -564,6 +568,24 @@ function render(state) {
     var badge = document.getElementById('completedBadge'); if(badge) badge.className = state.completed ? 'completed-badge show' : 'completed-badge';
     var bs=document.getElementById('btnStart'), bp=document.getElementById('btnPause');
     if(bs) bs.disabled=state.taskActive; if(bp) bp.disabled=!state.taskActive;
+
+    // 全局暂停横幅（仅配置员可见）
+    var pauseBanner = document.getElementById('globalPauseBanner');
+    if (getRole() === 'configurator') {
+        if (state.globalPaused) {
+            if (!pauseBanner) {
+                pauseBanner = document.createElement('div');
+                pauseBanner.id = 'globalPauseBanner';
+                pauseBanner.style.cssText = 'text-align:center;padding:8px;background:rgba(248,113,113,.12);color:var(--red);border-radius:8px;margin-bottom:10px;font-weight:700;font-size:13px';
+                var panel = document.getElementById('panelContent');
+                panel.insertBefore(pauseBanner, panel.firstChild);
+            }
+            pauseBanner.textContent = '⏸ 全局已暂停 — 所有运行员无法操作';
+            pauseBanner.style.display = '';
+        } else {
+            if (pauseBanner) pauseBanner.style.display = 'none';
+        }
+    }
 }
 
 // ====================================================================
