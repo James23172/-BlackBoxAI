@@ -17,6 +17,7 @@ import java.net.InetSocketAddress;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * WebSocket 服务器
@@ -29,6 +30,19 @@ public class CommandReceiver extends WebSocketServer {
     private final MessageBusClient messageBus;
     private StateBroadcaster stateBroadcaster;
     private BlackboardClient blackboard;
+
+    private final Map<WebSocket, ConnState> connStates = new ConcurrentHashMap<>();
+    private String machineId = "主";
+
+    public void setMachineId(String machineId) {
+        this.machineId = machineId;
+    }
+
+    static class ConnState {
+        String username;
+        String role;
+        String machineId;
+    }
 
     public CommandReceiver(InetSocketAddress address, MessageBusClient messageBus) {
         super(address);
@@ -46,15 +60,14 @@ public class CommandReceiver extends WebSocketServer {
 
     @Override
     public void onOpen(WebSocket conn, ClientHandshake handshake) {
+        connStates.put(conn, new ConnState());  // username=null，标记为未认证
         LOG.info("浏览器已连接: {}, 当前连接数: {}",
                 conn.getRemoteSocketAddress(), getConnections().size());
-        if (stateBroadcaster != null) {
-            stateBroadcaster.sendCurrentState(conn);
-        }
     }
 
     @Override
     public void onClose(WebSocket conn, int code, String reason, boolean remote) {
+        connStates.remove(conn);
         LOG.info("浏览器已断开: {}, 当前连接数: {}",
                 conn.getRemoteSocketAddress(), getConnections().size());
     }
@@ -65,6 +78,22 @@ public class CommandReceiver extends WebSocketServer {
         try {
             JSONObject json = JSON.parseObject(message);
             String type = json.getString("type");
+
+            // ── AUTH 认证检查 ──
+            ConnState state = connStates.get(conn);
+            if (state == null) {
+                conn.close(4001, "未注册连接");
+                return;
+            }
+            if (state.username == null) {
+                // 第一条消息必须是 AUTH
+                if (!"AUTH".equals(type)) {
+                    conn.close(4001, "请先认证");
+                    return;
+                }
+                handleAuth(conn, json);
+                return;
+            }
 
             switch (type) {
                 case "SET_CONFIG":
@@ -244,6 +273,53 @@ public class CommandReceiver extends WebSocketServer {
 
     private void handleRouteHide(WebSocket conn) {
         conn.send("{\"type\":\"ROUTE_HIDE\"}");
+    }
+
+    private void handleAuth(WebSocket conn, JSONObject json) {
+        String token = json.getString("token");
+        if (token == null || token.isEmpty()) {
+            conn.close(4001, "缺少认证令牌");
+            return;
+        }
+
+        // 调用 AuthServer 验证 token（URL 由 Display 的 --auth-host 参数决定）
+        try {
+            String authHost = System.getProperty("auth.host", "localhost");
+            int authPort = Integer.parseInt(System.getProperty("auth.port", "8890"));
+            java.net.URI uri = new java.net.URI("http", null, authHost, authPort,
+                    "/api/auth/verify", "token=" + token, null);
+            java.net.http.HttpClient client = java.net.http.HttpClient.newHttpClient();
+            java.net.http.HttpRequest req = java.net.http.HttpRequest.newBuilder(uri).GET().build();
+            java.net.http.HttpResponse<String> resp = client.send(req,
+                    java.net.http.HttpResponse.BodyHandlers.ofString());
+            if (resp.statusCode() != 200) {
+                conn.close(4001, "认证失败");
+                return;
+            }
+            com.alibaba.fastjson2.JSONObject verifyResp =
+                    com.alibaba.fastjson2.JSON.parseObject(resp.body());
+            if (!verifyResp.getBooleanValue("success", false)) {
+                conn.close(4001, "认证失败");
+                return;
+            }
+
+            ConnState state = connStates.get(conn);
+            state.username = verifyResp.getString("username");
+            state.role = verifyResp.getString("role");
+            state.machineId = machineId;
+
+            // 回复 AUTH_OK，告知前端 machine
+            com.alibaba.fastjson2.JSONObject ok = new com.alibaba.fastjson2.JSONObject();
+            ok.put("type", "AUTH_OK");
+            ok.put("machine", machineId);
+            conn.send(ok.toJSONString());
+
+            LOG.info("认证成功: username={}, role={}, machineId={}",
+                    state.username, state.role, state.machineId);
+        } catch (Exception e) {
+            LOG.error("AUTH 验证失败", e);
+            conn.close(4001, "认证服务不可用");
+        }
     }
 
     @Override

@@ -29,6 +29,7 @@ public class DisplayMain {
         int carCount = 4;
 
         // 解析命令行参数
+        String machineId = "主";
         for (int i = 0; i < args.length; i++) {
             if ("--port".equals(args[i]) && i + 1 < args.length) {
                 wsPort = Integer.parseInt(args[i + 1]);
@@ -39,8 +40,13 @@ public class DisplayMain {
                 httpPort = Integer.parseInt(args[i + 1]);
             } else if ("--car-count".equals(args[i]) && i + 1 < args.length) {
                 carCount = Integer.parseInt(args[i + 1]);
+            } else if ("--machine".equals(args[i]) && i + 1 < args.length) {
+                machineId = args[i + 1];
             }
         }
+
+        System.setProperty("auth.host", "localhost");
+        System.setProperty("auth.port", "8890");
 
         LOG.info("Display 模块启动中...");
 
@@ -53,6 +59,7 @@ public class DisplayMain {
 
         // 启动 WebSocket 服务器
         CommandReceiver wsServer = new CommandReceiver(new InetSocketAddress(wsPort), mq);
+        wsServer.setMachineId(machineId);
         wsServer.setBlackboard(bb);
         wsServer.start();
         LOG.info("WebSocket 服务器已启动，端口: {}", wsPort);

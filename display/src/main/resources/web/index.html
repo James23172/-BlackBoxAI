@@ -408,6 +408,8 @@ function connectWebSocket() {
     ws.onopen = function(){
         var el = document.getElementById('connStatus');
         el.textContent = '已连接'; el.className = 'badge badge-ok';
+        // 发送认证消息
+        ws.send(JSON.stringify({type: 'AUTH', token: getToken()}));
     };
     ws.onclose = function(){
         var el = document.getElementById('connStatus');
@@ -417,6 +419,10 @@ function connectWebSocket() {
     ws.onmessage = function(event){
         try {
             var msg = JSON.parse(event.data);
+            if (msg.type === 'AUTH_OK') {
+                MACHINE_ID = msg.machine;
+                return;
+            }
             currentState = msg;
             render(msg);
         } catch(e) { console.error(e); }
