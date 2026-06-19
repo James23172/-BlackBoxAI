@@ -6,6 +6,7 @@ import com.sun.net.httpserver.HttpHandler;
 import com.sun.net.httpserver.HttpServer;
 import inspection.common.client.BlackboardClient;
 import inspection.common.client.MessageBusClient;
+import inspection.common.config.ArgsParser;
 import inspection.common.config.ConfigConstants;
 import inspection.common.model.MQMessage;
 import org.slf4j.Logger;
@@ -15,6 +16,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.InetSocketAddress;
+import java.nio.charset.StandardCharsets;
 
 /**
  * Display 模块入口
@@ -24,42 +26,33 @@ public class DisplayMain {
     private static final Logger LOG = LoggerFactory.getLogger(DisplayMain.class);
 
     public static void main(String[] args) throws Exception {
-        int wsPort = 8887;
-        int httpPort = 8888;
-        int carCount = 4;
+        ArgsParser argsParser = new ArgsParser(args);
+        String redisHost = argsParser.get("--redis-host", ConfigConstants.REDIS_HOST);
+        int redisPort = argsParser.getInt("--redis-port", ConfigConstants.REDIS_PORT);
+        String mqHost = argsParser.get("--mq-host", ConfigConstants.RABBITMQ_HOST);
+        int mqPort = argsParser.getInt("--mq-port", ConfigConstants.RABBITMQ_PORT);
+        int wsPort = argsParser.getInt("--ws-port", 8887);
+        int httpPort = argsParser.getInt("--http-port", 8888);
+        int carCount = argsParser.getInt("--car-count", 4);
+        String machineId = argsParser.get("--machine", "主");
+        String authHost = argsParser.get("--auth-host", "localhost");
+        int authPort = argsParser.getInt("--auth-port", 8890);
 
-        // 解析命令行参数
-        String machineId = "主";
-        String authHost = "localhost";
-        String authPort = "8890";
-        for (int i = 0; i < args.length; i++) {
-            if ("--port".equals(args[i]) && i + 1 < args.length) {
-                wsPort = Integer.parseInt(args[i + 1]);
-                httpPort = wsPort + 1;
-            } else if ("--ws-port".equals(args[i]) && i + 1 < args.length) {
-                wsPort = Integer.parseInt(args[i + 1]);
-            } else if ("--http-port".equals(args[i]) && i + 1 < args.length) {
-                httpPort = Integer.parseInt(args[i + 1]);
-            } else if ("--car-count".equals(args[i]) && i + 1 < args.length) {
-                carCount = Integer.parseInt(args[i + 1]);
-            } else if ("--machine".equals(args[i]) && i + 1 < args.length) {
-                machineId = args[i + 1];
-            } else if ("--auth-host".equals(args[i]) && i + 1 < args.length) {
-                authHost = args[i + 1];
-            } else if ("--auth-port".equals(args[i]) && i + 1 < args.length) {
-                authPort = args[i + 1];
-            }
+        // --port 兼容旧调用方式：同时设置 ws 和 http 端口
+        if (argsParser.get("--port", null) != null) {
+            wsPort = argsParser.getInt("--port", 8887);
+            httpPort = wsPort + 1;
         }
 
+        // 设置 auth 地址供 CommandReceiver 使用
         System.setProperty("auth.host", authHost);
-        System.setProperty("auth.port", authPort);
+        System.setProperty("auth.port", String.valueOf(authPort));
 
         LOG.info("Display 模块启动中...");
 
         // 初始化基础客户端
-        BlackboardClient bb = new BlackboardClient(ConfigConstants.REDIS_HOST, ConfigConstants.REDIS_PORT);
-        MessageBusClient mq = new MessageBusClient(
-                ConfigConstants.RABBITMQ_HOST, ConfigConstants.RABBITMQ_PORT,
+        BlackboardClient bb = new BlackboardClient(redisHost, redisPort);
+        MessageBusClient mq = new MessageBusClient(mqHost, mqPort,
                 ConfigConstants.RABBITMQ_USER, ConfigConstants.RABBITMQ_PASS,
                 ConfigConstants.RABBITMQ_VHOST);
 
@@ -78,6 +71,7 @@ public class DisplayMain {
         // 启动 HTTP 静态文件服务器
         HttpServer httpServer = HttpServer.create(new InetSocketAddress(httpPort), 0);
         httpServer.createContext("/", new StaticFileHandler());
+        httpServer.createContext("/api/config", new ConfigHandler(machineId, authHost, authPort));
         httpServer.setExecutor(null);
         httpServer.start();
         LOG.info("HTTP 服务器已启动，端口: {}，访问 http://localhost:{}/index.html", httpPort, httpPort);
@@ -158,6 +152,35 @@ public class DisplayMain {
             OutputStream os = exchange.getResponseBody();
             os.write(bytes);
             os.close();
+        }
+    }
+
+    /**
+     * /api/config 端点，返回当前 Display 实例的配置信息
+     */
+    static class ConfigHandler implements HttpHandler {
+        private final String machineId;
+        private final String authHost;
+        private final int authPort;
+
+        ConfigHandler(String machineId, String authHost, int authPort) {
+            this.machineId = machineId;
+            this.authHost = authHost;
+            this.authPort = authPort;
+        }
+
+        @Override
+        public void handle(HttpExchange exchange) throws IOException {
+            JSONObject cfg = new JSONObject();
+            cfg.put("machine", machineId);
+            cfg.put("authServer", "http://" + authHost + ":" + authPort);
+            byte[] bytes = cfg.toJSONString().getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "application/json; charset=utf-8");
+            exchange.getResponseHeaders().set("Access-Control-Allow-Origin", "*");
+            exchange.sendResponseHeaders(200, bytes.length);
+            try (OutputStream os = exchange.getResponseBody()) {
+                os.write(bytes);
+            }
         }
     }
 }
