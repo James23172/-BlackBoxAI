@@ -224,7 +224,7 @@ public class Launcher {
                 "-Dsun.stdout.encoding=UTF-8",     // 强制 stdout 使用 UTF-8（Windows 下避免 GBK 乱码）
                 "-Dsun.stderr.encoding=UTF-8",     // 强制 stderr 使用 UTF-8
                 "-cp", cp,
-                "inspection.car.CarMain", carId);
+                "inspection.car.CarMain", "--car-id", carId);
         pb.directory(PROJECT_ROOT);
         pb.redirectOutput(ProcessBuilder.Redirect.PIPE);
         pb.redirectError(ProcessBuilder.Redirect.PIPE);
