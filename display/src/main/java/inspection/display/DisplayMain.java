@@ -148,6 +148,8 @@ public class DisplayMain {
             }
 
             exchange.getResponseHeaders().set("Content-Type", contentType);
+            // 禁用浏览器缓存，确保前端更新后用户看到最新版本
+            exchange.getResponseHeaders().set("Cache-Control", "no-cache, no-store, must-revalidate");
             exchange.sendResponseHeaders(200, bytes.length);
             OutputStream os = exchange.getResponseBody();
             os.write(bytes);
