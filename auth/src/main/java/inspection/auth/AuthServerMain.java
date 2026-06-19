@@ -54,7 +54,7 @@ public class AuthServerMain {
         for (int i = 0; i < 5; i++) {
             try {
                 if (users.getUser("admin") == null) {
-                    users.register("admin", "admin123", Role.CONFIGURATOR);
+                    users.register("admin", sha256Hex("admin123"), Role.CONFIGURATOR);
                     log.info("已创建默认管理员: admin/admin123");
                 }
                 break;
@@ -139,7 +139,7 @@ public class AuthServerMain {
                 // ── 兜底自愈：admin 不存在时现场创建 ──
                 User user = users.getUser(username);
                 if (user == null && "admin".equals(username)) {
-                    users.register("admin", "admin123", Role.CONFIGURATOR);
+                    users.register("admin", sha256Hex("admin123"), Role.CONFIGURATOR);
                     log.info("admin 账户已自愈重建");
                 }
 
@@ -267,5 +267,13 @@ public class AuthServerMain {
         byte[] b = new byte[32];
         new SecureRandom().nextBytes(b);
         return Base64.getEncoder().encodeToString(b);
+    }
+
+    private static String sha256Hex(String input) throws Exception {
+        java.security.MessageDigest md = java.security.MessageDigest.getInstance("SHA-256");
+        byte[] hash = md.digest(input.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        StringBuilder sb = new StringBuilder();
+        for (byte b : hash) sb.append(String.format("%02x", b));
+        return sb.toString();
     }
 }
