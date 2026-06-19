@@ -5,6 +5,7 @@ import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
 import com.sun.net.httpserver.HttpServer;
 import inspection.common.client.BlackboardClient;
+import inspection.common.config.ArgsParser;
 import inspection.common.config.ConfigConstants;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -28,16 +29,21 @@ public class ReplayMain {
     private static Jedis jedis;
 
     public static void main(String[] args) throws Exception {
-        var pool = new redis.clients.jedis.JedisPool(ConfigConstants.REDIS_HOST, ConfigConstants.REDIS_PORT);
+        ArgsParser argsParser = new ArgsParser(args);
+        String redisHost = argsParser.get("--redis-host", ConfigConstants.REDIS_HOST);
+        int redisPort = argsParser.getInt("--redis-port", ConfigConstants.REDIS_PORT);
+        int httpPort = argsParser.getInt("--port", 8893);
+
+        var pool = new redis.clients.jedis.JedisPool(redisHost, redisPort);
         jedis = pool.getResource();
 
-        HttpServer server = HttpServer.create(new InetSocketAddress(8891), 0);
+        HttpServer server = HttpServer.create(new InetSocketAddress(httpPort), 0);
         server.createContext("/api/replay/list", new ListHandler());
         server.createContext("/api/replay/snapshot/", new SnapshotHandler());
         server.createContext("/api/replay/metrics", new MetricsHandler());
         server.setExecutor(null);
         server.start();
-        log.info("ReplayServer 已启动，端口: 8891");
+        log.info("ReplayServer 已启动，端口: {}", httpPort);
     }
 
     static class ListHandler implements HttpHandler {

@@ -7,6 +7,8 @@ import com.sun.net.httpserver.HttpHandler;
 import com.sun.net.httpserver.HttpServer;
 import inspection.auth.model.Role;
 import inspection.auth.model.User;
+import inspection.common.config.ArgsParser;
+import inspection.common.config.ConfigConstants;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import redis.clients.jedis.Jedis;
@@ -41,7 +43,11 @@ public class AuthServerMain {
     private static PermissionManager perms;
 
     public static void main(String[] args) throws Exception {
-        pool = new JedisPool("localhost", 6379);
+        ArgsParser argsParser = new ArgsParser(args);
+        String redisHost = argsParser.get("--redis-host", ConfigConstants.REDIS_HOST);
+        int redisPort = argsParser.getInt("--redis-port", ConfigConstants.REDIS_PORT);
+
+        pool = new JedisPool(redisHost, redisPort);
         users = new UserManager(pool);
         perms = new PermissionManager(pool);
 
