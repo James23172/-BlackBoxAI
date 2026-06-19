@@ -70,14 +70,16 @@ public final class ConfigConstants {
     public static final String KEY_TASK_QUEUE = "taskQueue";
 
     // ==================== 地图参数默认值 ====================
-    public static final int DEFAULT_MAP_WIDTH = 30;
-    public static final int DEFAULT_MAP_HEIGHT = 30;
+    public static final int DEFAULT_MAP_WIDTH = 40;
+    public static final int DEFAULT_MAP_HEIGHT = 40;
+    /** 地图分块大小（像素），用于分块存储和按需加载 */
+    public static final int MAP_CHUNK_SIZE = 8;
     public static final double DEFAULT_OBSTACLE_DENSITY = 0.1;
     public static final int ILLUMINATE_RADIUS = 1;      // 3×3 点亮（架构文档规定）
     public static final int BLOCKED_TIMEOUT_TICKS = 2;   // 受阻超时节拍
 
     // ==================== 节拍参数 ====================
-    public static final int TICK_INTERVAL_MS = 500;
+    public static final int TICK_INTERVAL_MS = 200;
 
     // ==================== 分布式锁参数 ====================
     public static final int LOCK_EXPIRE_SECONDS = 30;

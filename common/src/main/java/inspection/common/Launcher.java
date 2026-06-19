@@ -81,6 +81,12 @@ public class Launcher {
         // Step 3: 按顺序启动所有模块进程
         String commonClasses = new File(PROJECT_ROOT, "common\\target\\classes").getAbsolutePath();
 
+        launch("AuthServer", "auth",
+                "inspection.auth.AuthServerMain", commonClasses, 2000);
+
+        launch("ReplayServer", "replay",
+                "inspection.replay.ReplayMain", commonClasses, 1500);
+
         launch("TaskConfigurator", "task-configurator",
                 "inspection.taskconfigurator.TaskConfiguratorMain", commonClasses, 2000);
 
@@ -140,7 +146,7 @@ public class Launcher {
     private static boolean autoCompile() {
         // 检查所有模块是否已编译（而非仅 common 模块）
         File pomFile = new File(PROJECT_ROOT, "pom.xml");
-        String[] modules = {"common", "controller", "car", "navigator", "target-planner", "task-configurator", "display"};
+        String[] modules = {"common", "auth", "replay", "controller", "car", "navigator", "target-planner", "task-configurator", "display"};
         boolean allCompiled = true;
         for (String m : modules) {
             File classesDir = new File(PROJECT_ROOT, m + "\\target\\classes");

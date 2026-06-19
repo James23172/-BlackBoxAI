@@ -60,6 +60,7 @@ public class NavigatorMain {
     private BlackboardClient blackboard;
     private MessageBusClient messageBus;
     private final PathPlanner bfsPlanner = new BFSPlanner();
+    private final PathPlanner astarPlanner = new AStarPlanner();
 
     public static void main(String[] args) throws Exception {
         new NavigatorMain().start();
@@ -146,7 +147,9 @@ public class NavigatorMain {
         boolean[][] obstacles = blackboard.getMapBlocked();
         boolean[][] explored = blackboard.getMapView();
 
-        List<Point> path = bfsPlanner.plan(carPos, target, obstacles, explored, width, height);
+        String algo = blackboard.getRouteAlgorithm();
+        PathPlanner planner = "ASTAR".equalsIgnoreCase(algo) ? astarPlanner : bfsPlanner;
+        List<Point> path = planner.plan(carPos, target, obstacles, explored, width, height);
         if (path == null || path.isEmpty()) {
             LOG.warn("❌ 路径规划失败: {} -> {}", carPos, target);
             handleNavigateFailed(carId);

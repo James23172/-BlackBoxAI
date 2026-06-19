@@ -17,6 +17,8 @@
         <module>navigator</module>
         <module>target-planner</module>
         <module>task-configurator</module>
+        <module>replay</module>
+        <module>auth</module>
         <module>display</module>
     </modules>
 

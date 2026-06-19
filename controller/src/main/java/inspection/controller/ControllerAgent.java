@@ -156,6 +156,14 @@ public class ControllerAgent {
             case "RESET":
                 handleResetTask(task);
                 return;
+            case "RECORD_START":
+                log.info("⏺ 开始录制快照");
+                recording = true;
+                return;
+            case "RECORD_STOP":
+                log.info("⏹ 停止录制快照");
+                recording = false;
+                return;
         }
 
         // 车辆相关任务
@@ -258,8 +266,9 @@ public class ControllerAgent {
                 String.valueOf(Math.max(4, bb.getAllCarIds().size())))));
         data.put("obstacleDensity", Double.parseDouble(task.getOrDefault("obstacleDensity", String.valueOf(ConfigConstants.DEFAULT_OBSTACLE_DENSITY))));
         data.put("reset", true);
+        data.put("forceReset", true);
         data.put("active", false);
-        log.info("🔄 RESET → 转发到 TaskConfigurator");
+        log.info("🔄 RESET → 转发到 TaskConfigurator (forceReset=true)");
         userActivated = false;
         taskActive = false;
         sendCommand(CommandType.FORWARD_CONFIG, data, ConfigConstants.QUEUE_TASK_CONFIG_CMD);
@@ -286,6 +295,8 @@ public class ControllerAgent {
                 // 每 tick 主动推进所有 IDLE 且有路径的小车（每个 tick 最多 1 步）
                 tickDriveCars();
                 tickCount++;
+                // 快照录制（用于回放）
+                saveSnapshotIfRecording();
                 if (tickCount % 20 == 0) {
                     log.info("节拍 #{} 完成，未探索剩余: {}, 探索率: {}%", tickCount, unexploredCount, explored);
                 }
@@ -393,6 +404,45 @@ public class ControllerAgent {
         } catch (Exception e) {
             log.error("发送消息失败: {} -> {}", cmd, destination, e);
         }
+    }
+
+    // ==================== 快照录制 ====================
+
+    private volatile boolean recording = false;
+
+    public void setRecording(boolean r) { this.recording = r; }
+
+    private void saveSnapshotIfRecording() {
+        if (!recording) return;
+        try {
+            com.alibaba.fastjson2.JSONObject snap = new com.alibaba.fastjson2.JSONObject();
+            snap.put("tick", tickCount);
+            snap.put("timestamp", System.currentTimeMillis());
+            snap.put("mapWidth", bb.getMapWidth());
+            snap.put("mapHeight", bb.getMapHeight());
+            snap.put("exploredRate", getExploredPercent() / 100.0);
+            snap.put("taskActive", taskActive);
+            // 简化存储：只存探索率和车辆状态（地图位图不存，回放时从Redis实时读）
+            var cars = new com.alibaba.fastjson2.JSONArray();
+            for (String id : getAllCarIds()) {
+                var cs = new com.alibaba.fastjson2.JSONObject();
+                cs.put("carId", id);
+                cs.put("status", bb.getCarStatus(id).name());
+                var p = bb.getCarPosition(id);
+                cs.put("position", p != null ? com.alibaba.fastjson2.JSON.toJSON(p) : null);
+                cs.put("steps", bb.getCarSteps(id));
+                cars.add(cs);
+            }
+            snap.put("cars", cars);
+            // 地图位图做base64压缩
+            var map = bb.getMapView();
+            var sb = new StringBuilder();
+            for (int y = 0; y < bb.getMapHeight(); y++)
+                for (int x = 0; x < bb.getMapWidth(); x++)
+                    sb.append(map[y][x] ? '1' : '0');
+            snap.put("mapBits", sb.toString());
+            bb.getJedis().rpush("replay:snapshots", snap.toJSONString());
+        } catch (Exception e) { /* 录制失败不影响主流程 */ }
     }
 
     // ==================== 查询辅助 ====================

@@ -13,40 +13,53 @@ public class CarMain {
     private static final Logger log = LoggerFactory.getLogger(CarMain.class);
 
     public static void main(String[] args) {
-        String carId = args.length > 0 ? args[0] : ConfigConstants.CAR_ID;
-        log.info("[Car:{}] 启动中...", carId);
+        String carId = ConfigConstants.CAR_ID;
+        String redisHost = ConfigConstants.REDIS_HOST; int redisPort = ConfigConstants.REDIS_PORT;
+        String rabbitHost = ConfigConstants.RABBITMQ_HOST; int rabbitPort = ConfigConstants.RABBITMQ_PORT;
+        for (int i = 0; i < args.length; i++) {
+            switch (args[i]) {
+                case "--car-id": carId = args[++i]; break;
+                case "--redis-host": redisHost = args[++i]; break;
+                case "--redis-port": redisPort = Integer.parseInt(args[++i]); break;
+                case "--rabbit-host": rabbitHost = args[++i]; break;
+                case "--rabbit-port": rabbitPort = Integer.parseInt(args[++i]); break;
+            }
+        }
+        if (carId == null || carId.isEmpty()) carId = ConfigConstants.CAR_ID;
+        final String finalCarId = carId;
+        log.info("[Car:{}] 启动中... (Redis={}:{} RabbitMQ={}:{})", finalCarId, redisHost, redisPort, rabbitHost, rabbitPort);
 
-        BlackboardClient bb = new BlackboardClient(
-                ConfigConstants.REDIS_HOST, ConfigConstants.REDIS_PORT);
-        MessageBusClient mq = new MessageBusClient();
+        final BlackboardClient bb = new BlackboardClient(redisHost, redisPort);
+        final MessageBusClient mq = new MessageBusClient(rabbitHost, rabbitPort,
+                ConfigConstants.RABBITMQ_USER, ConfigConstants.RABBITMQ_PASS, ConfigConstants.RABBITMQ_VHOST);
 
-        CarAgent agent = new CarAgent(carId, bb, mq);
+        final CarAgent agent = new CarAgent(finalCarId, bb, mq);
 
-        String queueName = ConfigConstants.carQueueName(carId);
-        log.info("[Car:{}] 订阅队列 {}", carId, queueName);
+        final String queueName = ConfigConstants.carQueueName(finalCarId);
+        log.info("[Car:{}] 订阅队列 {}", finalCarId, queueName);
 
         AtomicLong tickCounter = new AtomicLong(0);
 
         mq.subscribe(queueName, message -> {
             try {
                 String cmd = message.getCmd();
-                log.debug("[Car:{}] 收到命令: {}", carId, cmd);
+                log.debug("[Car:{}] 收到命令: {}", finalCarId, cmd);
 
                 if (CommandType.MOVE_STEP.name().equals(cmd)) {
                     long tick = tickCounter.incrementAndGet();
                     agent.handleTickMove(tick);
                 } else {
-                    log.warn("[Car:{}] 未知命令: {}", carId, cmd);
+                    log.warn("[Car:{}] 未知命令: {}", finalCarId, cmd);
                 }
             } catch (Exception e) {
-                log.error("[Car:{}] 处理消息异常: {}", carId, e.getMessage(), e);
+                log.error("[Car:{}] 处理消息异常: {}", finalCarId, e.getMessage(), e);
             }
         });
 
-        log.info("[Car:{}] 启动完成，等待命令...", carId);
+        log.info("[Car:{}] 启动完成，等待命令...", finalCarId);
 
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
-            log.info("[Car:{}] 关闭中...", carId);
+            log.info("[Car:{}] 关闭中...", finalCarId);
             mq.close();
             bb.close();
         }));

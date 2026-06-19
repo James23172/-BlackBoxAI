@@ -117,6 +117,15 @@ public class TaskConfiguratorMain {
             return;
         }
 
+        // ──── 崩溃恢复：配置已存在 且 非强制重置 → 跳过初始化 ────
+        boolean forceReset = data.getBooleanValue("forceReset", false);
+        Map<String, String> existingConfig = blackboard.getTaskConfig();
+        if (!forceReset && existingConfig != null && !existingConfig.isEmpty()) {
+            LOG.info("检测到已有配置 (forceReset=false)，跳过全量初始化，复用现有状态");
+            try { blackboard.getJedis().bgsave(); } catch (Exception e) { /* ignore */ }
+            return;
+        }
+
         int mapWidth = data.getIntValue("mapWidth", ConfigConstants.DEFAULT_MAP_WIDTH);
         int mapHeight = data.getIntValue("mapHeight", ConfigConstants.DEFAULT_MAP_HEIGHT);
         int carCount = data.getIntValue("carCount", 1);
@@ -187,6 +196,9 @@ public class TaskConfiguratorMain {
         LOG.info("初始化完成: mapWidth={}, mapHeight={}, carCount={}, obstacleCount={}, " +
                 "taskQueue 已填入 {} 个 ROUTE_NEEDED 任务。等待用户 Start 激活 Controller",
                 mapWidth, mapHeight, carCount, obstacleCount, carIds.size());
+
+        // 触发 Redis 持久化快照（用于崩溃恢复）
+        try { blackboard.getJedis().bgsave(); } catch (Exception e) { /* ignore */ }
     }
 
     /**

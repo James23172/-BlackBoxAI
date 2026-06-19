@@ -94,6 +94,17 @@ public class CommandReceiver extends WebSocketServer {
                 case "REMOVE_CAR":
                     handleRemoveCar(json);
                     break;
+                case "TOGGLE_OBSTACLE":
+                    handleToggleObstacle(json);
+                    break;
+                case "RECORD_START":
+                    blackboard.pushTask("RECORD_START", (Map<String, String>) null);
+                    LOG.info("RECORD_START: 已推送到 taskQueue");
+                    break;
+                case "RECORD_STOP":
+                    blackboard.pushTask("RECORD_STOP", (Map<String, String>) null);
+                    LOG.info("RECORD_STOP: 已推送到 taskQueue");
+                    break;
                 default:
                     LOG.warn("未知浏览器命令: {}", type);
             }
@@ -193,6 +204,21 @@ public class CommandReceiver extends WebSocketServer {
         // 2. 同时 push REMOVE_CAR 到 taskQueue
         blackboard.pushTask("REMOVE_CAR", carId, null);
         LOG.info("REMOVE_CAR: carId={}, 已推送到 taskQueue", carId);
+    }
+
+    private void handleToggleObstacle(JSONObject json) {
+        int x = json.getIntValue("x");
+        int y = json.getIntValue("y");
+        try {
+            // 切换障碍物状态：SETBIT翻转
+            try (var jedis = blackboard.getJedis()) {
+                boolean cur = jedis.getbit(ConfigConstants.KEY_MAP_BLOCKED, (long) y * blackboard.getMapWidth() + x);
+                jedis.setbit(ConfigConstants.KEY_MAP_BLOCKED, (long) y * blackboard.getMapWidth() + x, !cur);
+                LOG.info("障碍物切换: ({},{}) {} → {}", x, y, cur ? "ON" : "OFF", !cur ? "ON" : "OFF");
+            }
+        } catch (Exception e) {
+            LOG.error("切换障碍物失败", e);
+        }
     }
 
     // ==================== Route Display ====================

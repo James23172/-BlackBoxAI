@@ -5,1000 +5,583 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>多机器人协同巡检仿真系统</title>
     <style>
-        /* ==================== DESIGN TOKENS ==================== */
         :root {
-            --bg-root: #060b16;
-            --bg-card: #0d1524;
-            --bg-surface: #111b2e;
-            --bg-input: #0a1222;
-            --text-primary: #edf2f9;
-            --text-secondary: #8b9cc0;
-            --text-muted: #55657e;
-            --accent: #38bdf8;
-            --accent-2: #818cf8;
-            --accent-3: #c084fc;
-            --success: #34d399;
-            --warning: #f59e0b;
-            --danger: #f87171;
-            --border: #1a2744;
-            --border-active: #2a3a5c;
-            --radius-sm: 8px;
-            --radius-md: 12px;
-            --radius-lg: 16px;
-            --radius-xl: 20px;
-            --shadow-card: 0 4px 24px rgba(0,0,0,0.4), 0 1px 3px rgba(0,0,0,0.3);
-            --shadow-glow: 0 0 24px rgba(56,189,248,0.12);
-            --transition: 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+            --bg-root: #060b16; --bg-card: #0d1524; --bg-surface: #111b2e; --bg-input: #0a1222;
+            --text: #edf2f9; --text2: #8b9cc0; --text3: #55657e;
+            --accent: #38bdf8; --green: #34d399; --yellow: #f59e0b; --red: #f87171;
+            --border: #1a2744; --radius: 12px; --shadow: 0 4px 24px rgba(0,0,0,0.4);
             --font-mono: 'JetBrains Mono', 'Cascadia Code', 'Consolas', monospace;
         }
-
-        /* ==================== RESET & BASE ==================== */
-        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-        body {
-            font-family: 'Inter', 'Segoe UI', 'Microsoft YaHei', system-ui, sans-serif;
-            background: var(--bg-root);
-            color: var(--text-primary);
-            min-height: 100vh;
-            padding: 20px 24px 32px;
-            line-height: 1.5;
-            -webkit-font-smoothing: antialiased;
-            background-image:
-                radial-gradient(ellipse 80% 50% at 50% -20%, rgba(56,189,248,0.06), transparent),
-                radial-gradient(ellipse 40% 40% at 80% 80%, rgba(129,140,248,0.04), transparent);
+        *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+        body{
+            font-family:'Inter','Segoe UI','Microsoft YaHei',system-ui,sans-serif;
+            background:var(--bg-root);color:var(--text);min-height:100vh;
+            padding:20px 24px 32px;line-height:1.5;
+            background-image:radial-gradient(ellipse 80% 50% at 50% -20%,rgba(56,189,248,0.06),transparent);
         }
 
-        /* Subtle grid pattern overlay */
-        body::before {
-            content: '';
-            position: fixed;
-            inset: 0;
-            pointer-events: none;
-            z-index: 0;
-            background-image:
-                linear-gradient(rgba(56,189,248,0.015) 1px, transparent 1px),
-                linear-gradient(90deg, rgba(56,189,248,0.015) 1px, transparent 1px);
-            background-size: 48px 48px;
-            mask-image: radial-gradient(ellipse 60% 60% at 50% 30%, black 30%, transparent 70%);
-        }
+        /* ===== LOGIN PAGE ===== */
+        .login-wrap{display:flex;justify-content:center;align-items:center;min-height:80vh}
+        .login-box{background:var(--bg-card);border-radius:16px;padding:40px 36px;border:1px solid var(--border);box-shadow:var(--shadow);width:400px;max-width:100%}
+        .login-box h2{text-align:center;margin-bottom:8px;font-size:22px}
+        .login-box .sub{text-align:center;font-size:12px;color:var(--text3);margin-bottom:24px}
+        .login-box .row{margin-bottom:14px}
+        .login-box label{display:block;font-size:11px;color:var(--text2);margin-bottom:5px;font-weight:600}
+        .login-box input{width:100%;padding:10px 14px;border:1px solid var(--border);border-radius:8px;background:var(--bg-input);color:var(--text);font-size:14px;outline:none;transition:all .2s}
+        .login-box input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(56,189,248,.12)}
+        .login-box .btn{width:100%;padding:12px;border:none;border-radius:8px;cursor:pointer;font-size:14px;font-weight:700;color:#fff;transition:all .2s;margin-top:6px}
+        .login-box .btn:hover:not(:disabled){transform:translateY(-1px);box-shadow:0 6px 20px rgba(0,0,0,.4)}
+        .login-box .btn:disabled{opacity:.3;cursor:not-allowed}
+        .btn-login{background:linear-gradient(135deg,#059669,#10b981)}
+        .error-msg{text-align:center;margin-top:12px;font-size:12px;color:var(--red);min-height:18px;transition:all .3s}
+        .login-tip{text-align:center;margin-top:12px;font-size:11px;color:var(--text3)}
 
-        /* ==================== HEADER ==================== */
-        .header {
-            position: relative;
-            z-index: 1;
-            text-align: center;
-            margin-bottom: 24px;
-        }
-        .header h1 {
-            font-size: 28px;
-            font-weight: 800;
-            letter-spacing: -0.5px;
-            background: linear-gradient(135deg, var(--accent) 0%, var(--accent-2) 45%, var(--accent-3) 100%);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            background-clip: text;
-            margin-bottom: 6px;
-        }
-        .header .subtitle {
-            font-size: 13px;
-            color: var(--text-muted);
-            font-weight: 400;
-            letter-spacing: 0.3px;
-            margin-bottom: 14px;
-        }
-        .connection-status {
-            font-size: 11px;
-            font-weight: 600;
-            letter-spacing: 0.6px;
-            padding: 6px 16px;
-            border-radius: 20px;
-            display: inline-flex;
-            align-items: center;
-            gap: 7px;
-            transition: all 0.35s ease;
-            text-transform: uppercase;
-        }
-        .connection-status::before {
-            content: '';
-            width: 8px;
-            height: 8px;
-            border-radius: 50%;
-            background: currentColor;
-            flex-shrink: 0;
-            box-shadow: 0 0 8px currentColor;
-        }
-        .connected {
-            background: rgba(52,211,153,0.1);
-            color: var(--success);
-            border: 1px solid rgba(52,211,153,0.25);
-            box-shadow: 0 0 12px rgba(52,211,153,0.08);
-        }
-        .disconnected {
-            background: rgba(248,113,113,0.1);
-            color: var(--danger);
-            border: 1px solid rgba(248,113,113,0.25);
-            animation: pulse-disconnected 2s ease-in-out infinite;
-        }
-        @keyframes pulse-disconnected {
-            0%, 100% { opacity: 1; }
-            50% { opacity: 0.55; }
-        }
+        /* ===== MAIN APP ===== */
+        .header{text-align:center;margin-bottom:20px}
+        .header h1{font-size:26px;font-weight:800;background:linear-gradient(135deg,var(--accent)0%,#818cf8 45%,#c084fc 100%);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;margin-bottom:4px}
+        .header .sub{font-size:12px;color:var(--text3);margin-bottom:10px}
+        .badge{font-size:11px;font-weight:600;padding:5px 14px;border-radius:20px;display:inline-flex;align-items:center;gap:6px}
+        .badge::before{content:'';width:8px;height:8px;border-radius:50%;background:currentColor;box-shadow:0 0 8px currentColor}
+        .badge-ok{background:rgba(52,211,153,.1);color:var(--green);border:1px solid rgba(52,211,153,.25)}
+        .badge-err{background:rgba(248,113,113,.1);color:var(--red);border:1px solid rgba(248,113,113,.25);animation:pulse 2s infinite}
+        @keyframes pulse{0%,100%{opacity:1}50%{opacity:.55}}
+        .user-bar{display:flex;justify-content:center;align-items:center;gap:16px;font-size:12px;color:var(--text2);margin-bottom:6px}
+        .user-bar .logout{color:var(--red);cursor:pointer;background:none;border:none;font-size:12px}
 
-        /* ==================== MAIN LAYOUT ==================== */
-        .main-container {
-            position: relative;
-            z-index: 1;
-            display: flex;
-            gap: 20px;
-            justify-content: center;
-            align-items: flex-start;
-            max-width: 1200px;
-            margin: 0 auto;
-        }
+        .main{display:flex;gap:20px;justify-content:center;align-items:flex-start;max-width:1400px;margin:0 auto}
+        .canvas-card{background:var(--bg-card);border-radius:16px;border:1px solid var(--border);padding:16px;box-shadow:var(--shadow)}
+        #gridCanvas{display:block;border-radius:8px;cursor:crosshair;max-width:100%}
+        .panel{background:var(--bg-card);border-radius:16px;width:340px;flex-shrink:0;border:1px solid var(--border);box-shadow:var(--shadow);overflow:hidden}
+        .panel-section{padding:16px 18px}.panel-section+.panel-section{border-top:1px solid var(--border)}
+        .section-title{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--text3);margin-bottom:12px;display:flex;align-items:center;gap:8px}
+        .section-title::after{content:'';flex:1;height:1px;background:var(--border)}
+        .form-row{display:flex;gap:10px;margin-bottom:10px}
+        .form-field{flex:1;display:flex;flex-direction:column;gap:4px}
+        .form-field label{color:var(--text2);font-size:11px;font-weight:600}
+        .form-field input{width:100%;padding:8px 12px;border:1px solid var(--border);border-radius:8px;background:var(--bg-input);color:var(--text);font-size:13px;outline:none;transition:all .2s}
+        .form-field input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(56,189,248,.1)}
+        .btn-row{display:flex;gap:8px}
+        .btn{flex:1;padding:10px 6px;border:none;border-radius:8px;cursor:pointer;font-size:12px;font-weight:600;color:#fff;letter-spacing:.3px;transition:all .2s}
+        .btn:disabled{opacity:.3;cursor:not-allowed;filter:grayscale(40%)}
+        .btn:not(:disabled):hover{transform:translateY(-1px);box-shadow:0 6px 20px rgba(0,0,0,.35)}
+        .btn-start{background:linear-gradient(135deg,#059669,#10b981)}
+        .btn-pause{background:linear-gradient(135deg,#d97706,#f59e0b);color:#1a1a1a}
+        .btn-reset{background:linear-gradient(135deg,#b91c1c,#ef4444)}
+        .btn-full{flex:none;width:100%}
+        .explore-bar-outer{flex:1;height:8px;border-radius:8px;background:var(--bg-input);overflow:hidden}
+        .explore-bar-inner{height:100%;border-radius:8px;background:linear-gradient(90deg,#059669,#34d399);transition:width .5s}
+        .explore-value{font-family:var(--font-mono);font-size:15px;font-weight:700;color:var(--green);min-width:56px;text-align:right;transition:all .3s}
+        .task-active{background:rgba(52,211,153,.12);color:var(--green);font-size:11px;padding:2px 10px;border-radius:10px}
+        .task-inactive{background:rgba(248,113,113,.1);color:var(--red);font-size:11px;padding:2px 10px;border-radius:10px}
+        .car-table{width:100%;border-collapse:collapse;font-size:11px}
+        .car-table th{text-align:left;color:var(--text3);font-weight:600;font-size:10px;text-transform:uppercase;padding-bottom:8px;border-bottom:1px solid var(--border)}
+        .car-table td{padding:6px 2px;border-bottom:1px solid rgba(26,39,68,.5);color:var(--text2);transition:all .3s}
+        .car-table .status-dot{display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:5px;box-shadow:0 0 6px currentColor;transition:background .3s}
+        .car-table tr{cursor:pointer}.car-table tr:hover{background:rgba(56,189,248,.04)}.car-table tr.selected{background:rgba(56,189,248,.06)}
+        .car-steps{font-family:var(--font-mono);color:var(--accent);font-weight:600}
+        .completed-badge{display:none;text-align:center;padding:12px;background:linear-gradient(135deg,#059669,#34d399);border-radius:8px;font-weight:700;color:#fff;margin-top:10px}
+        .completed-badge.show{display:block;animation:pop .45s}
+        @keyframes pop{0%{transform:scale(.85);opacity:0}60%{transform:scale(1.03)}100%{transform:scale(1);opacity:1}}
+        .legend-inline{display:flex;flex-wrap:wrap;gap:8px 12px}
+        .legend-chip{display:flex;align-items:center;gap:5px;font-size:11px;color:var(--text2)}
+        .legend-dot{width:10px;height:10px;border-radius:3px}
 
-        /* ==================== CANVAS CARD ==================== */
-        .canvas-card {
-            background: var(--bg-card);
-            border-radius: var(--radius-xl);
-            border: 1px solid var(--border);
-            padding: 16px;
-            box-shadow: var(--shadow-card), var(--shadow-glow);
-            flex-shrink: 0;
-            position: relative;
-            overflow: hidden;
-        }
-        .canvas-card::after {
-            content: '';
-            position: absolute;
-            top: 0; left: 0; right: 0;
-            height: 1px;
-            background: linear-gradient(90deg, transparent, rgba(56,189,248,0.3), transparent);
-        }
-        #gridCanvas {
-            display: block;
-            border-radius: var(--radius-md);
-            image-rendering: auto;
-            cursor: crosshair;
-            transition: box-shadow var(--transition);
-            max-width: 100%;
-            height: auto;
-        }
+        /* User management table */
+        .user-table{width:100%;font-size:11px;border-collapse:collapse;margin-top:8px}
+        .user-table td{padding:4px 6px;border-bottom:1px solid var(--border)}
 
-        /* ==================== CONTROL PANEL ==================== */
-        .control-panel {
-            background: var(--bg-card);
-            border-radius: var(--radius-xl);
-            width: 310px;
-            flex-shrink: 0;
-            border: 1px solid var(--border);
-            box-shadow: var(--shadow-card);
-            overflow: hidden;
-            position: relative;
-        }
-        .control-panel::after {
-            content: '';
-            position: absolute;
-            top: 0; left: 0; right: 0;
-            height: 1px;
-            background: linear-gradient(90deg, transparent, rgba(56,189,248,0.2), transparent);
-        }
+        .hidden{display:none!important}
+        @media(max-width:900px){.main{flex-direction:column;align-items:center}.panel{width:100%;max-width:440px}}
 
-        /* Section */
-        .panel-section {
-            padding: 18px 20px;
-        }
-        .panel-section + .panel-section {
-            border-top: 1px solid var(--border);
-        }
-        .section-title {
-            font-size: 11px;
-            font-weight: 700;
-            text-transform: uppercase;
-            letter-spacing: 1.2px;
-            color: var(--text-muted);
-            margin-bottom: 14px;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-        }
-        .section-title::after {
-            content: '';
-            flex: 1;
-            height: 1px;
-            background: var(--border);
-        }
-
-        /* Form rows */
-        .form-row {
-            display: flex;
-            gap: 10px;
-            margin-bottom: 12px;
-        }
-        .form-row:last-child { margin-bottom: 0; }
-        .form-field {
-            flex: 1;
-            display: flex;
-            flex-direction: column;
-            gap: 5px;
-        }
-        .form-field label {
-            color: var(--text-secondary);
-            font-size: 11px;
-            font-weight: 600;
-            letter-spacing: 0.3px;
-        }
-        .form-field input {
-            width: 100%;
-            padding: 9px 12px;
-            border: 1px solid var(--border);
-            border-radius: var(--radius-sm);
-            background: var(--bg-input);
-            color: var(--text-primary);
-            font-size: 13px;
-            font-family: inherit;
-            transition: all var(--transition);
-            outline: none;
-        }
-        .form-field input:focus {
-            border-color: var(--accent);
-            box-shadow: 0 0 0 3px rgba(56,189,248,0.12);
-        }
-        input[type="number"] {
-            -moz-appearance: textfield;
-        }
-        input::-webkit-outer-spin-button,
-        input::-webkit-inner-spin-button {
-            -webkit-appearance: none;
-        }
-
-        /* Buttons */
-        .btn-row {
-            display: flex;
-            gap: 8px;
-        }
-        .btn {
-            flex: 1;
-            padding: 10px 8px;
-            border: none;
-            border-radius: var(--radius-sm);
-            cursor: pointer;
-            font-size: 13px;
-            font-weight: 600;
-            color: white;
-            letter-spacing: 0.3px;
-            transition: all 0.2s ease;
-            position: relative;
-            overflow: hidden;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            gap: 5px;
-        }
-        .btn:disabled {
-            opacity: 0.3;
-            cursor: not-allowed;
-            filter: grayscale(40%);
-        }
-        .btn:not(:disabled):hover {
-            transform: translateY(-1px);
-            box-shadow: 0 6px 20px rgba(0,0,0,0.35);
-        }
-        .btn:not(:disabled):active { transform: translateY(0) scale(0.98); }
-
-        .btn-apply  { background: linear-gradient(135deg, #2563eb, #6366f1); }
-        .btn-start  { background: linear-gradient(135deg, #059669, #10b981); }
-        .btn-pause  { background: linear-gradient(135deg, #d97706, #f59e0b); color: #1a1a1a; }
-        .btn-reset  { background: linear-gradient(135deg, #b91c1c, #ef4444); }
-
-        .btn-full { flex: none; width: 100%; }
-
-        /* Toggle */
-        .toggle-row {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            padding: 8px 0;
-        }
-        .toggle-row span {
-            font-size: 12px;
-            color: var(--text-secondary);
-            font-weight: 500;
-        }
-        .toggle-switch {
-            position: relative;
-            width: 42px;
-            height: 24px;
-        }
-        .toggle-switch input { opacity: 0; width: 0; height: 0; }
-        .toggle-slider {
-            position: absolute;
-            cursor: pointer;
-            inset: 0;
-            background: var(--bg-input);
-            border-radius: 24px;
-            border: 1px solid var(--border);
-            transition: all 0.3s ease;
-        }
-        .toggle-slider:before {
-            position: absolute;
-            content: "";
-            height: 16px;
-            width: 16px;
-            left: 3px;
-            bottom: 3px;
-            background: var(--text-secondary);
-            border-radius: 50%;
-            transition: all 0.3s ease;
-        }
-        input:checked + .toggle-slider {
-            background: var(--accent);
-            border-color: var(--accent);
-        }
-        input:checked + .toggle-slider:before {
-            background: white;
-            transform: translateX(18px);
-        }
-        .route-hint {
-            font-size: 11px;
-            color: var(--text-muted);
-            text-align: center;
-            padding-top: 6px;
-            font-style: italic;
-        }
-
-        /* ==================== EXPLORATION PROGRESS ==================== */
-        .explore-bar-wrap {
-            display: flex;
-            align-items: center;
-            gap: 12px;
-        }
-        .explore-bar-outer {
-            flex: 1;
-            height: 8px;
-            border-radius: 8px;
-            background: var(--bg-input);
-            border: 1px solid var(--border);
-            overflow: hidden;
-        }
-        .explore-bar-inner {
-            height: 100%;
-            border-radius: 8px;
-            background: linear-gradient(90deg, #059669, #34d399);
-            transition: width 0.5s ease;
-            box-shadow: 0 0 8px rgba(52,211,153,0.3);
-        }
-        .explore-value {
-            font-family: var(--font-mono);
-            font-size: 15px;
-            font-weight: 700;
-            color: var(--success);
-            min-width: 56px;
-            text-align: right;
-            transition: all 0.3s ease;
-        }
-        .task-status-badge {
-            display: inline-block;
-            padding: 2px 10px;
-            border-radius: 10px;
-            font-size: 11px;
-            font-weight: 600;
-            letter-spacing: 0.3px;
-        }
-        .task-active   { background: rgba(52,211,153,0.12); color: var(--success); }
-        .task-inactive { background: rgba(248,113,113,0.10); color: var(--danger); }
-
-        /* ==================== MULTI-CAR TABLE ==================== */
-        .car-table {
-            width: 100%;
-            border-collapse: collapse;
-            font-size: 11px;
-        }
-        .car-table th {
-            text-align: left;
-            color: var(--text-muted);
-            font-weight: 600;
-            font-size: 10px;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-            padding-bottom: 8px;
-            border-bottom: 1px solid var(--border);
-        }
-        .car-table td {
-            padding: 6px 2px;
-            border-bottom: 1px solid rgba(26,39,68,0.5);
-            color: var(--text-secondary);
-        }
-        .car-table tr:last-child td { border-bottom: none; }
-        .car-table .car-name {
-            color: var(--text-primary);
-            font-weight: 600;
-            transition: all 0.3s ease;
-        }
-        .car-table .status-dot {
-            display: inline-block;
-            width: 7px;
-            height: 7px;
-            border-radius: 50%;
-            margin-right: 5px;
-            vertical-align: middle;
-            box-shadow: 0 0 6px currentColor;
-            transition: background 0.3s ease, box-shadow 0.3s ease;
-        }
-        .car-table .car-pos {
-            font-family: var(--font-mono);
-            font-size: 10px;
-            transition: all 0.3s ease;
-        }
-        .car-table .car-steps {
-            font-family: var(--font-mono);
-            color: var(--accent);
-            font-weight: 600;
-            transition: all 0.3s ease;
-        }
-
-        /* Selected car highlight */
-        .car-table tr.selected {
-            background: rgba(56,189,248,0.06);
-            border-radius: 4px;
-        }
-        .car-table tr {
-            cursor: pointer;
-            transition: background var(--transition);
-        }
-        .car-table tr:hover {
-            background: rgba(56,189,248,0.04);
-        }
-
-        /* ==================== COMPLETED BADGE ==================== */
-        .completed-badge {
-            display: none;
-            text-align: center;
-            padding: 12px 16px;
-            background: linear-gradient(135deg, #059669, #34d399);
-            border-radius: var(--radius-sm);
-            font-weight: 700;
-            font-size: 14px;
-            color: white;
-            letter-spacing: 0.5px;
-            box-shadow: 0 0 28px rgba(52,211,153,0.3);
-            margin-top: 12px;
-        }
-        .completed-badge.show {
-            display: block;
-            animation: badge-pop 0.45s ease-out;
-        }
-        @keyframes badge-pop {
-            0% { transform: scale(0.85); opacity: 0; }
-            60% { transform: scale(1.03); }
-            100% { transform: scale(1); opacity: 1; }
-        }
-
-        /* ==================== LEGEND ==================== */
-        .legend-inline {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 10px 14px;
-        }
-        .legend-chip {
-            display: flex;
-            align-items: center;
-            gap: 6px;
-            font-size: 11px;
-            color: var(--text-secondary);
-        }
-        .legend-dot {
-            width: 10px;
-            height: 10px;
-            border-radius: 3px;
-            flex-shrink: 0;
-            box-shadow: 0 0 6px currentColor;
-        }
-
-        /* ==================== RESPONSIVE ==================== */
-        @media (max-width: 900px) {
-            .main-container {
-                flex-direction: column;
-                align-items: center;
-            }
-            .control-panel {
-                width: 100%;
-                max-width: 440px;
-            }
-            .canvas-card {
-                width: 100%;
-                max-width: 440px;
-            }
-            #gridCanvas {
-                width: 100%;
-                height: auto;
-            }
-        }
+        /* Register section */
+        .reg-row{display:flex;gap:8px;margin-bottom:8px}
+        .reg-row input{flex:1;padding:7px 10px;border:1px solid var(--border);border-radius:6px;background:var(--bg-input);color:var(--text);font-size:12px;outline:none}
+        .reg-row select{padding:7px 10px;border:1px solid var(--border);border-radius:6px;background:var(--bg-input);color:var(--text);font-size:12px}
+        .reg-msg{font-size:11px;min-height:16px;margin-top:4px}
     </style>
 </head>
 <body>
-    <!-- ==================== HEADER ==================== -->
+
+<!-- ==================== LOGIN PAGE ==================== -->
+<div id="loginPage">
+    <div class="login-wrap">
+        <div class="login-box">
+            <h2>🚗 多机器人协作巡检</h2>
+            <div class="sub">请登录以使用系统</div>
+            <div class="row"><label>用户名</label><input type="text" id="loginUser" placeholder="admin" autocomplete="username"></div>
+            <div class="row"><label>密码</label><input type="password" id="loginPass" placeholder="admin123" autocomplete="current-password"></div>
+            <button class="btn btn-login" id="loginBtn" onclick="doLogin()">登 录</button>
+            <div class="error-msg" id="loginError"></div>
+            <div class="login-tip">默认管理员：admin / admin123</div>
+        </div>
+    </div>
+</div>
+
+<!-- ==================== MAIN APP ==================== -->
+<div id="mainApp" class="hidden">
     <div class="header">
-        <h1>多机器人协同巡检</h1>
-        <div class="subtitle">Multi-Robot Collaborative Inspection Simulator</div>
-        <span id="connStatus" class="connection-status disconnected">未连接</span>
+        <h1 id="appTitle">多机器人协同巡检</h1>
+        <div class="user-bar">
+            <span>👤 <span id="userDisplay"></span>（<span id="roleLabel"></span>）</span>
+            <button class="logout" onclick="doLogout()">退出登录</button>
+        </div>
+        <span id="connStatus" class="badge badge-err">未连接</span>
     </div>
 
-    <!-- ==================== MAIN ==================== -->
-    <div class="main-container">
-        <!-- 地图 -->
-        <div class="canvas-card">
-            <canvas id="gridCanvas" width="600" height="600"></canvas>
-        </div>
-
-        <!-- 控制面板 -->
-        <div class="control-panel">
-            <!-- 地图配置 -->
-            <div class="panel-section">
-                <div class="section-title">地图配置</div>
-                <div class="form-row">
-                    <div class="form-field">
-                        <label>地图宽度</label>
-                        <input type="number" id="mapWidth" value="30" min="10" max="80">
-                    </div>
-                    <div class="form-field">
-                        <label>地图高度</label>
-                        <input type="number" id="mapHeight" value="30" min="10" max="80">
-                    </div>
-                </div>
-                <div class="form-row">
-                    <div class="form-field">
-                        <label>小车数量</label>
-                        <input type="number" id="carCount" value="4" min="1" max="20">
-                    </div>
-                    <div class="form-field">
-                        <label>障碍物密度</label>
-                        <input type="number" id="obstacleDensity" value="0.1" min="0" max="1" step="0.05">
-                    </div>
-                </div>
-            </div>
-
-            <!-- 控制按钮 -->
-            <div class="panel-section">
-                <div class="section-title">任务控制</div>
-                <div class="btn-row">
-                    <button class="btn btn-start" id="btnStart" onclick="sendCommand('START')">▶ 开始</button>
-                    <button class="btn btn-pause" id="btnPause" onclick="sendCommand('PAUSE')">⏸ 暂停</button>
-                    <button class="btn btn-reset" id="btnReset" onclick="sendCommand('RESET')">↺ 重置</button>
-                </div>
-
-                <!-- 添加小车 -->
-                <button class="btn btn-apply btn-full" id="btnAddCar" onclick="addCar()" style="margin-top:8px;background:linear-gradient(135deg,#7c3aed,#a78bfa)">
-                    ➕ 添加小车
-                </button>
-            </div>
-
-            <!-- 统计 -->
-            <div class="panel-section">
-                <div class="section-title">运行状态</div>
-
-                <!-- 探索进度条 -->
-                <div style="margin-bottom:10px">
-                    <div style="display:flex;justify-content:space-between;margin-bottom:4px">
-                        <span style="font-size:11px;color:var(--text-muted);font-weight:600">探索率</span>
-                        <span id="taskStatus" class="task-status-badge task-inactive">未激活</span>
-                    </div>
-                    <div class="explore-bar-wrap">
-                        <div class="explore-bar-outer">
-                            <div class="explore-bar-inner" id="exploreBar" style="width:0%"></div>
-                        </div>
-                        <span class="explore-value" id="exploreRate">0.00%</span>
-                    </div>
-                </div>
-
-                <!-- 小车状态表 -->
-                <table class="car-table" id="carTable">
-                    <thead>
-                        <tr>
-                            <th>小车</th>
-                            <th>状态</th>
-                            <th>位置</th>
-                            <th>步数</th>
-                            <th>操作</th>
-                        </tr>
-                    </thead>
-                    <tbody id="carTableBody">
-                        <tr><td colspan="5" style="text-align:center;color:var(--text-muted);padding:12px">等待数据...</td></tr>
-                    </tbody>
-                </table>
-
-                <!-- 巡检完成 -->
-                <div class="completed-badge" id="completedBadge">🎉 巡检完成！</div>
-            </div>
-
-            <!-- 图例 -->
-            <div class="panel-section">
-                <div class="section-title">图例</div>
-                <div class="legend-inline">
-                    <div class="legend-chip"><span class="legend-dot" style="background:#1a2436;color:#1a2436"></span>未探索</div>
-                    <div class="legend-chip"><span class="legend-dot" style="background:#1e4d3a;color:#1e4d3a"></span>已探索</div>
-                    <div class="legend-chip"><span class="legend-dot" style="background:#5c3d2e;color:#5c3d2e"></span>障碍物</div>
-                    <div class="legend-chip"><span class="legend-dot" style="background:#2196F3;color:#2196F3"></span>空闲</div>
-                    <div class="legend-chip"><span class="legend-dot" style="background:#8BC34A;color:#8BC34A"></span>移动中</div>
-                    <div class="legend-chip"><span class="legend-dot" style="background:#F44336;color:#F44336"></span>阻塞</div>
-                </div>
-            </div>
-        </div>
+    <!-- All role panels share the same canvas + panel, swapped dynamically -->
+    <div class="main" id="mainLayout">
+        <div class="canvas-card"><canvas id="gridCanvas" width="640" height="640"></canvas></div>
+        <div class="panel" id="panelContent"></div>
     </div>
+</div>
 
-    <script>
-    // ==================== 常量 ====================
-    var WS_URL = 'ws://localhost:8887';
-    var CELL_SIZE = 20;
-    var CAR_STATUS_COLORS = {
-        'IDLE': '#2196F3',
-        'MOVING': '#8BC34A',
-        'BLOCKED': '#F44336'
-    };
-    var CAR_STATUS_LABELS = {
-        'IDLE': '空闲',
-        'MOVING': '移动中',
-        'BLOCKED': '阻塞'
-    };
-    var UNEXPLORED_COLOR = '#1a2436';
-    var EXPLORED_COLOR = '#1e4d3a';
-    var OBSTACLE_COLOR = '#5c3d2e';
+<script>
+// ====================================================================
+//  STATE
+// ====================================================================
+var ws = null, currentState = null, selectedCarId = null;
+var CAR_STATUS_COLORS = { 'IDLE': '#2196F3', 'MOVING': '#8BC34A', 'BLOCKED': '#F44336' };
+var CAR_STATUS_LABELS = { 'IDLE': '空闲', 'MOVING': '移动中', 'BLOCKED': '阻塞' };
+var CELL_SIZE = 16; // 40×40
+var TICK_INTERVAL = 200;
+var animFrameId = null, lastRenderTime = 0;
+var carPositions = {}; // smooth interpolation
+var targetPositions = {};
 
-    // ==================== 状态 ====================
-    var ws = null;
-    var currentState = null;
-    var selectedCarId = null;
+// ====================================================================
+//  ROUTE GUARD
+// ====================================================================
+function getToken() { return localStorage.getItem('token'); }
+function getRole()  { return localStorage.getItem('role'); }
+function getUsername() { return localStorage.getItem('username'); }
+function isLoggedIn() {
+    var t = getToken(); if (!t) return false;
+    try {
+        var payload = JSON.parse(atob(t.split('.')[1] || 'e30='));
+        if (payload.exp && Date.now() > payload.exp) { localStorage.clear(); return false; }
+        return true;
+    } catch(e) { return !!t; }
+}
 
-    // ==================== WebSocket ====================
-    function connectWebSocket() {
-        if (ws && ws.readyState === WebSocket.OPEN) return;
+function routeGuard() {
+    var hash = location.hash || '#login';
+    if (hash === '#login') { showLogin(); return; }
+    if (!isLoggedIn()) { showLogin('会话已过期，请重新登录'); return; }
+    var role = getRole();
+    var valid = { '#configurator': 'configurator', '#operator': 'operator', '#analyst': 'analyst' };
+    if (valid[hash] && valid[hash] === role) { showMain(role); return; }
+    // Redirect to correct role page
+    location.hash = '#' + role;
+}
 
-        ws = new WebSocket(WS_URL);
+window.addEventListener('hashchange', routeGuard);
 
-        ws.onopen = function() {
-            console.log('WebSocket connected');
-            var el = document.getElementById('connStatus');
-            el.textContent = '已连接';
-            el.className = 'connection-status connected';
-        };
+// ====================================================================
+//  LOGIN
+// ====================================================================
+function showLogin(msg) {
+    document.getElementById('loginPage').className = '';
+    document.getElementById('mainApp').className = 'hidden';
+    if (ws) { try{ws.close()}catch(e){} ws = null; }
+    var el = document.getElementById('loginError');
+    el.textContent = msg || '';
+}
 
-        ws.onclose = function() {
-            console.log('WebSocket disconnected');
-            var el = document.getElementById('connStatus');
-            el.textContent = '未连接';
-            el.className = 'connection-status disconnected';
-            setTimeout(connectWebSocket, 3000);
-        };
+async function doLogin() {
+    var u = document.getElementById('loginUser').value.trim() || 'admin';
+    var p = document.getElementById('loginPass').value || 'admin123';
+    var errEl = document.getElementById('loginError');
+    var btn = document.getElementById('loginBtn');
+    errEl.textContent = ''; btn.disabled = true; btn.textContent = '登录中...';
 
-        ws.onerror = function(err) {
-            console.error('WebSocket error:', err);
-        };
-
-        ws.onmessage = function(event) {
-            try {
-                var msg = JSON.parse(event.data);
-
-                currentState = msg;
-                render(msg);
-            } catch (e) {
-                console.error('Failed to process message:', e);
-            }
-        };
+    try {
+        var r = await fetch('http://localhost:8890/api/auth/login', {
+            method:'POST', headers:{'Content-Type':'application/json'},
+            body: JSON.stringify({username:u, password:p})
+        });
+        var j = await r.json();
+        if (j.success) {
+            localStorage.setItem('token', j.token);
+            localStorage.setItem('role', j.role);
+            localStorage.setItem('username', j.username);
+            location.hash = '#' + j.role;
+        } else {
+            errEl.textContent = j.error || '用户名或密码错误';
+            document.getElementById('loginPass').value = '';
+            document.getElementById('loginUser').focus();
+        }
+    } catch(e) {
+        errEl.textContent = '认证服务未启动 (localhost:8890)';
+    } finally {
+        btn.disabled = false; btn.textContent = '登 录';
     }
+}
 
-    // ==================== Canvas 点击 ====================
-    document.getElementById('gridCanvas').addEventListener('click', function(e) {
+// Allow Enter key to login
+document.addEventListener('keydown', function(e){
+    if (e.key === 'Enter' && !document.getElementById('mainApp').className.includes('hidden') === false) {
+        if (document.getElementById('loginPage').className === '') doLogin();
+    }
+});
+
+function doLogout() {
+    localStorage.clear();
+    if (ws) { try{ws.close()}catch(e){} ws = null; }
+    location.hash = '#login';
+    showLogin();
+}
+
+// ====================================================================
+//  MAIN APP ENTRY
+// ====================================================================
+function showMain(role) {
+    document.getElementById('loginPage').className = 'hidden';
+    document.getElementById('mainApp').className = '';
+    document.getElementById('userDisplay').textContent = getUsername();
+    var labels = {configurator:'配置员',operator:'运行员',analyst:'分析员'};
+    document.getElementById('roleLabel').textContent = labels[role] || role;
+    document.getElementById('appTitle').textContent = (labels[role]||role) + '面板';
+
+    buildPanel(role);
+    connectWebSocket();
+}
+
+function buildPanel(role) {
+    var p = document.getElementById('panelContent');
+    if (role === 'configurator') {
+        p.innerHTML =
+            section('地图配置',[
+                row([f('地图宽度','mapWidth','40','number',10,80),f('地图高度','mapHeight','40','number',10,80)]),
+                row([f('小车数量','carCount','4','number',1,20),f('障碍物密度','obstacleDensity','0.1','number',0,1,0.05)]),
+                '<div style="font-size:10px;color:var(--text3);margin-bottom:6px">右键点击地图格子切换障碍物</div>'
+            ]) +
+            section('任务控制',[
+                '<div class="btn-row"><button class="btn btn-start" id="btnStart" onclick="sendCmd(\'START\')">▶ 开始</button><button class="btn btn-pause" id="btnPause" onclick="sendCmd(\'PAUSE\')">⏸ 暂停</button><button class="btn btn-reset" id="btnReset" onclick="sendCmd(\'RESET\')">↺ 重置</button></div>',
+                '<button class="btn btn-full" onclick="addCar()" style="margin-top:8px;background:linear-gradient(135deg,#7c3aed,#a78bfa)">➕ 添加小车</button>'
+            ]) +
+            section('运行状态',[
+                '<div style="display:flex;justify-content:space-between;margin-bottom:4px"><span style="font-size:11px;color:var(--text3);font-weight:600">探索率</span><span id="taskStatus" class="task-inactive">未激活</span></div>',
+                '<div style="display:flex;align-items:center;gap:12px;margin-bottom:10px"><div class="explore-bar-outer"><div class="explore-bar-inner" id="exploreBar" style="width:0%"></div></div><span class="explore-value" id="exploreRate">0.0%</span></div>',
+                carTable(5),
+                '<div class="completed-badge" id="completedBadge">🎉 巡检完成！</div>'
+            ]) +
+            section('用户管理',[
+                '<div class="reg-row"><input type="text" id="regUser" placeholder="用户名"><input type="password" id="regPass" placeholder="密码"><select id="regRole"><option value="operator">运行员</option><option value="analyst">分析员</option></select></div>',
+                '<button class="btn btn-full" onclick="doRegister()" style="background:linear-gradient(135deg,#2563eb,#6366f1)">➕ 创建用户</button>',
+                '<div class="reg-msg" id="regMsg"></div>'
+            ]) +
+            section('图例',[legendHtml()]);
+    } else if (role === 'operator') {
+        p.innerHTML =
+            section('任务控制',[
+                '<div class="btn-row"><button class="btn btn-start" id="btnStart" onclick="sendCmd(\'START\')">▶ 开始</button><button class="btn btn-pause" id="btnPause" onclick="sendCmd(\'PAUSE\')">⏸ 暂停</button></div>'
+            ]) +
+            section('运行状态',[
+                '<div style="display:flex;justify-content:space-between;margin-bottom:4px"><span style="font-size:11px;color:var(--text3);font-weight:600">探索率</span><span id="taskStatus" class="task-inactive">未激活</span></div>',
+                '<div style="display:flex;align-items:center;gap:12px;margin-bottom:10px"><div class="explore-bar-outer"><div class="explore-bar-inner" id="exploreBar" style="width:0%"></div></div><span class="explore-value" id="exploreRate">0.0%</span></div>',
+                carTable(4),
+                '<div class="completed-badge" id="completedBadge">🎉 巡检完成！</div>'
+            ]) +
+            section('图例',[legendHtml()]);
+    } else if (role === 'analyst') {
+        p.innerHTML =
+            section('回放',[
+                '<div style="font-size:11px;color:var(--text3);margin-bottom:8px">快照回放 (需先在配置员面板开启录制)</div>',
+                '<div style="display:flex;gap:4px;margin-bottom:8px"><button onclick="replayLoad()" style="background:var(--bg-input);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:4px 10px;cursor:pointer;font-size:11px">刷新列表</button><button id="replayPlayBtn" onclick="replayPlay()" style="background:var(--bg-input);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:4px 10px;cursor:pointer;font-size:11px">▶ 播放</button></div>',
+                '<div style="font-size:10px;color:var(--text3)" id="replayInfo">未加载快照</div>'
+            ]) +
+            section('运行状态',[
+                '<div style="display:flex;justify-content:space-between;margin-bottom:4px"><span style="font-size:11px;color:var(--text3);font-weight:600">探索率</span><span id="taskStatus" class="task-inactive">未激活</span></div>',
+                '<div style="display:flex;align-items:center;gap:12px;margin-bottom:10px"><div class="explore-bar-outer"><div class="explore-bar-inner" id="exploreBar" style="width:0%"></div></div><span class="explore-value" id="exploreRate">0.0%</span></div>',
+                carTable(4),
+                '<div class="completed-badge" id="completedBadge">🎉 巡检完成！</div>'
+            ]) +
+            section('图例',[legendHtml()]);
+    }
+    attachCanvasListeners(role);
+}
+
+// ====================================================================
+//  HTML HELPERS
+// ====================================================================
+function section(title, items) { return '<div class="panel-section"><div class="section-title">'+title+'</div>'+items.join('')+'</div>'; }
+function row(fields) { return '<div class="form-row">'+fields.join('')+'</div>'; }
+function f(label, id, val, type, min, max, step){
+    return '<div class="form-field"><label>'+label+'</label><input type="'+type+'" id="'+id+'" value="'+val+'"'+(min!=null?' min="'+min+'"':'')+(max!=null?' max="'+max+'"':'')+(step?' step="'+step+'"':'')+'></div>';
+}
+function carTable(cols) { return '<table class="car-table"><thead><tr><th>小车</th><th>状态</th><th>位置</th><th>步数</th>'+(cols===5?'<th>操作</th>':'')+'</tr></thead><tbody id="carTableBody"><tr><td colspan="'+cols+'" style="text-align:center;color:var(--text3);padding:12px">等待数据...</td></tr></tbody></table>'; }
+function legendHtml() { return '<div class="legend-inline">' +
+    '<div class="legend-chip"><span class="legend-dot" style="background:#1a2436"></span>未探索</div>' +
+    '<div class="legend-chip"><span class="legend-dot" style="background:#1e4d3a"></span>已探索</div>' +
+    '<div class="legend-chip"><span class="legend-dot" style="background:#5c3d2e"></span>障碍物</div>' +
+    '<div class="legend-chip"><span class="legend-dot" style="background:#2196F3"></span>空闲</div>' +
+    '<div class="legend-chip"><span class="legend-dot" style="background:#8BC34A"></span>移动中</div>' +
+    '<div class="legend-chip"><span class="legend-dot" style="background:#F44336"></span>阻塞</div></div>'; }
+
+// ====================================================================
+//  CANVAS + OBSTACLE TOGGLE
+// ====================================================================
+function attachCanvasListeners(role) {
+    var canvas = document.getElementById('gridCanvas');
+    // Click car selection
+    canvas.addEventListener('click', function(e){
         if (!currentState) return;
-
-        var canvas = document.getElementById('gridCanvas');
         var rect = canvas.getBoundingClientRect();
-        var mx = e.clientX - rect.left;
-        var my = e.clientY - rect.top;
-
-        var mapView = currentState.mapView || [];
-        var rows = mapView.length;
-        var cols = rows > 0 ? mapView[0].length : 30;
-        var actualCellSize = canvas.width / cols;
-
+        var mx = e.clientX - rect.left, my = e.clientY - rect.top;
+        var rows = (currentState.mapView||[]).length || 40, cols = rows > 0 ? (currentState.mapView[0]||[]).length : 40;
+        var cs = canvas.width / cols;
         var cars = currentState.cars || [];
         for (var i = 0; i < cars.length; i++) {
-            var car = cars[i];
-            if (!car.position) continue;
-            var cx = car.position.x * actualCellSize + actualCellSize / 2;
-            var cy = car.position.y * actualCellSize + actualCellSize / 2;
-            var radius = Math.max(actualCellSize / 2 - 2, 4) + 4;
-            var dx = mx - cx, dy = my - cy;
-            if (dx * dx + dy * dy <= radius * radius) {
-                selectedCarId = car.carId;
-                if (currentState) render(currentState);
-                return;
-            }
+            var car = cars[i]; if (!car.position) continue;
+            var cx = car.position.x * cs + cs/2, cy = car.position.y * cs + cs/2;
+            if ((mx-cx)*(mx-cx)+(my-cy)*(my-cy) <= (cs/2+4)*(cs/2+4)) { selectedCarId = car.carId; render(currentState); return; }
+        }
+        selectedCarId = null; render(currentState);
+    });
+    // Right-click obstacle toggle (configurator only)
+    if (role === 'configurator') {
+        canvas.addEventListener('contextmenu', function(e){
+            e.preventDefault();
+            if (!currentState) return;
+            var rect = canvas.getBoundingClientRect();
+            var mx = e.clientX - rect.left, my = e.clientY - rect.top;
+            var rows = (currentState.mapView||[]).length || 40, cols = rows > 0 ? (currentState.mapView[0]||[]).length : 40;
+            var cs = canvas.width / cols;
+            var gx = Math.floor(mx/cs), gy = Math.floor(my/cs);
+            if (gx>=0&&gx<cols&&gy>=0&&gy<rows) ws.send(JSON.stringify({type:'TOGGLE_OBSTACLE',x:gx,y:gy}));
+        });
+    }
+}
+
+// ====================================================================
+//  WEBSOCKET
+// ====================================================================
+function connectWebSocket() {
+    if (ws && ws.readyState === WebSocket.OPEN) return;
+    var proto = location.protocol === 'https:' ? 'wss' : 'ws';
+    ws = new WebSocket(proto + '://' + location.hostname + ':8887');
+    ws.onopen = function(){
+        var el = document.getElementById('connStatus');
+        el.textContent = '已连接'; el.className = 'badge badge-ok';
+    };
+    ws.onclose = function(){
+        var el = document.getElementById('connStatus');
+        el.textContent = '未连接'; el.className = 'badge badge-err';
+        setTimeout(connectWebSocket, 3000);
+    };
+    ws.onmessage = function(event){
+        try {
+            var msg = JSON.parse(event.data);
+            currentState = msg;
+            render(msg);
+        } catch(e) { console.error(e); }
+    };
+}
+
+function sendCmd(type) {
+    if (!ws || ws.readyState !== WebSocket.OPEN) { alert('WebSocket未连接!'); return; }
+    var msg = { type: type };
+    if (type === 'RESET') {
+        msg.mapWidth = parseInt((document.getElementById('mapWidth')||{}).value) || 40;
+        msg.mapHeight = parseInt((document.getElementById('mapHeight')||{}).value) || 40;
+        msg.carCount = parseInt((document.getElementById('carCount')||{}).value) || 4;
+        msg.obstacleDensity = parseFloat((document.getElementById('obstacleDensity')||{}).value) || 0.1;
+    }
+    ws.send(JSON.stringify(msg));
+}
+
+function addCar() {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    var cars = (currentState&&currentState.cars)||[];
+    var used = {}; cars.forEach(function(c){used[c.carId]=true});
+    var n = 1; while(used['Car'+String(n).padStart(3,'0')]) n++;
+    ws.send(JSON.stringify({type:'ADD_CAR', carId:'Car'+String(n).padStart(3,'0'), x:Math.floor(Math.random()*30)+5, y:Math.floor(Math.random()*30)+5}));
+}
+function removeCar(id) { if(confirm('确认移除 '+id+'?')) ws.send(JSON.stringify({type:'REMOVE_CAR',carId:id})); }
+function selectCarFromTable(id) { selectedCarId = id; render(currentState); }
+
+// ====================================================================
+//  RENDER (Double-buffered canvas + incremental table)
+// ====================================================================
+var _colCache = {};
+function getColor(cell, x, y, obstacles) {
+    var k = x+','+y;
+    if (obstacles[k]) return '#5c3d2e';
+    if (cell) return '#1e4d3a';
+    return '#1a2436';
+}
+
+function render(state) {
+    if (!state) return;
+    var ctx = document.getElementById('gridCanvas').getContext('2d');
+    var mapView = state.mapView || [];
+    var rows = mapView.length, cols = rows > 0 ? mapView[0].length : 40;
+    var cellSize = Math.floor(640 / Math.max(cols, rows));
+    var W = cols * cellSize, H = rows * cellSize;
+    var canvas = document.getElementById('gridCanvas');
+    canvas.width = W; canvas.height = H;
+
+    // Double buffer
+    var off = document.createElement('canvas'); off.width = W; off.height = H;
+    var c = off.getContext('2d');
+
+    var obs = {}; (state.obstacles||[]).forEach(function(p){obs[p.x+','+p.y]=true});
+
+    // Grid cells
+    for (var y = 0; y < rows; y++)
+        for (var x = 0; x < cols; x++) {
+            c.fillStyle = obs[x+','+y] ? '#5c3d2e' : (mapView[y]&&mapView[y][x] ? '#1e4d3a' : '#1a2436');
+            c.fillRect(x*cellSize, y*cellSize, cellSize-1, cellSize-1);
         }
 
-        // 取消选中
-        selectedCarId = null;
-        if (currentState) render(currentState);
+    // Cars
+    (state.cars||[]).forEach(function(car){
+        if (!car.position) return;
+        var cx = car.position.x*cellSize+cellSize/2, cy = car.position.y*cellSize+cellSize/2;
+        var r = Math.max(cellSize/2-2, 4);
+        var color = CAR_STATUS_COLORS[car.status] || '#FFF';
+
+        // Highlight ring
+        if (selectedCarId === car.carId) {
+            c.beginPath(); c.arc(cx,cy,r+5,0,2*Math.PI); c.strokeStyle='#f59e0b'; c.lineWidth=2.5;
+            c.shadowColor='#f59e0b'; c.shadowBlur=10; c.globalAlpha=0.9; c.stroke(); c.shadowBlur=0; c.globalAlpha=1;
+        }
+        // Target
+        if (car.target && car.target.x>=0 && car.target.y>=0) {
+            var tx=car.target.x*cellSize+cellSize/2, ty=car.target.y*cellSize+cellSize/2;
+            c.beginPath(); c.setLineDash([3,3]); c.moveTo(cx,cy); c.lineTo(tx,ty);
+            c.strokeStyle=color; c.globalAlpha=0.4; c.lineWidth=1; c.stroke(); c.setLineDash([]); c.globalAlpha=1;
+        }
+        // Car circle
+        var grad = c.createRadialGradient(cx-r*0.3,cy-r*0.3,r*0.1,cx,cy,r);
+        grad.addColorStop(0,'#fff'); grad.addColorStop(0.4,color); grad.addColorStop(1,'rgba(0,0,0,0.4)');
+        c.beginPath(); c.arc(cx,cy,r,0,2*Math.PI); c.fillStyle=grad; c.fill();
+        c.strokeStyle='rgba(255,255,255,0.5)'; c.lineWidth=1.5; c.stroke();
+        // Label
+        c.fillStyle='#FFF'; c.font='bold '+(cellSize*0.5)+'px sans-serif'; c.textAlign='center'; c.textBaseline='middle';
+        c.fillText(car.carId?car.carId.slice(-1):'?', cx, cy);
     });
 
-    // ==================== 渲染 ====================
-    function render(state) {
-        if (!state) return;
+    // Grid lines
+    c.strokeStyle='rgba(255,255,255,0.03)'; c.lineWidth=0.5;
+    for (var gx=0;gx<=cols;gx++){c.beginPath();c.moveTo(gx*cellSize,0);c.lineTo(gx*cellSize,rows*cellSize);c.stroke()}
+    for (var gy=0;gy<=rows;gy++){c.beginPath();c.moveTo(0,gy*cellSize);c.lineTo(cols*cellSize,gy*cellSize);c.stroke()}
 
-        var canvas = document.getElementById('gridCanvas');
-        var ctx = canvas.getContext('2d');
-        var mapView = state.mapView || [];
-        var rows = mapView.length;
-        var cols = rows > 0 ? mapView[0].length : 30;
+    ctx.clearRect(0,0,W,H); ctx.drawImage(off,0,0);
 
-        var cellSize = CELL_SIZE;
-        if (cols > 40 || rows > 40) {
-            cellSize = Math.floor(600 / Math.max(cols, rows));
-        }
+    // Panel updates
+    var rate = parseFloat(state.exploredRate*100).toFixed(1);
+    var erEl = document.getElementById('exploreRate'); if(erEl){erEl.textContent=rate+'%'; document.getElementById('exploreBar').style.width=rate+'%'}
+    var tsEl = document.getElementById('taskStatus'); if(tsEl){tsEl.textContent=state.taskActive?'运行中':'未激活'; tsEl.className=state.taskActive?'task-active':'task-inactive'}
 
-        var canvasW = cols * cellSize;
-        var canvasH = rows * cellSize;
-        canvas.width = canvasW;
-        canvas.height = canvasH;
-
-        ctx.clearRect(0, 0, canvasW, canvasH);
-
-        // 障碍物集合
-        var obstacles = {};
-        (state.obstacles || []).forEach(function(p) {
-            obstacles[p.x + ',' + p.y] = true;
-        });
-
-        // 网格
-        for (var y = 0; y < rows; y++) {
-            for (var x = 0; x < cols; x++) {
-                var key = x + ',' + y;
-                if (obstacles[key]) {
-                    ctx.fillStyle = OBSTACLE_COLOR;
-                } else if (mapView[y] && mapView[y][x]) {
-                    ctx.fillStyle = EXPLORED_COLOR;
-                } else {
-                    ctx.fillStyle = UNEXPLORED_COLOR;
-                }
-                ctx.fillRect(x * cellSize, y * cellSize, cellSize - 1, cellSize - 1);
-            }
-        }
-
-        // 小车
-        (state.cars || []).forEach(function(car) {
-            if (!car.position) return;
-            var cx = car.position.x * cellSize + cellSize / 2;
-            var cy = car.position.y * cellSize + cellSize / 2;
-            var radius = Math.max(cellSize / 2 - 2, 4);
-            var color = CAR_STATUS_COLORS[car.status] || '#FFF';
-
-            // 选中高亮环
-            if (selectedCarId === car.carId) {
-                ctx.beginPath();
-                ctx.arc(cx, cy, radius + 5, 0, 2 * Math.PI);
-                ctx.strokeStyle = '#f59e0b';
-                ctx.lineWidth = 2.5;
-                ctx.shadowColor = '#f59e0b';
-                ctx.shadowBlur = 10;
-                ctx.globalAlpha = 0.9;
-                ctx.stroke();
-                ctx.shadowBlur = 0;
-                ctx.globalAlpha = 1.0;
-            }
-
-            // 目标虚线
-            if (car.target && car.target.x >= 0 && car.target.y >= 0) {
-                var tx = car.target.x * cellSize + cellSize / 2;
-                var ty = car.target.y * cellSize + cellSize / 2;
-                ctx.beginPath();
-                ctx.setLineDash([3, 3]);
-                ctx.moveTo(cx, cy);
-                ctx.lineTo(tx, ty);
-                ctx.strokeStyle = color;
-                ctx.globalAlpha = 0.4;
-                ctx.lineWidth = 1;
-                ctx.stroke();
-                ctx.setLineDash([]);
-                ctx.globalAlpha = 1.0;
-
-                ctx.beginPath();
-                ctx.arc(tx, ty, 3, 0, 2 * Math.PI);
-                ctx.fillStyle = color;
-                ctx.globalAlpha = 0.6;
-                ctx.fill();
-                ctx.globalAlpha = 1.0;
-            }
-
-            // 小车圆
-            var grad = ctx.createRadialGradient(cx - radius * 0.3, cy - radius * 0.3, radius * 0.1, cx, cy, radius);
-            grad.addColorStop(0, '#ffffff');
-            grad.addColorStop(0.4, color);
-            grad.addColorStop(1, 'rgba(0,0,0,0.4)');
-            ctx.beginPath();
-            ctx.arc(cx, cy, radius, 0, 2 * Math.PI);
-            ctx.fillStyle = grad;
-            ctx.fill();
-            ctx.strokeStyle = 'rgba(255,255,255,0.5)';
-            ctx.lineWidth = 1.5;
-            ctx.stroke();
-
-            // 编号
-            ctx.fillStyle = '#FFF';
-            ctx.font = 'bold ' + (cellSize * 0.5) + 'px ' + getComputedStyle(document.body).fontFamily;
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'middle';
-            ctx.fillText(car.carId ? car.carId.slice(-1) : '?', cx, cy);
-        });
-
-        // 网格线
-        ctx.strokeStyle = 'rgba(255,255,255,0.03)';
-        ctx.lineWidth = 0.5;
-        for (var gx = 0; gx <= cols; gx++) {
-            ctx.beginPath(); ctx.moveTo(gx * cellSize, 0); ctx.lineTo(gx * cellSize, rows * cellSize); ctx.stroke();
-        }
-        for (var gy = 0; gy <= rows; gy++) {
-            ctx.beginPath(); ctx.moveTo(0, gy * cellSize); ctx.lineTo(cols * cellSize, gy * cellSize); ctx.stroke();
-        }
-
-        // ---- 更新面板 ----
-
-        // 探索率
-        var ratePct = parseFloat(state.exploredRate * 100).toFixed(1);
-        document.getElementById('exploreRate').textContent = ratePct + '%';
-        document.getElementById('exploreBar').style.width = ratePct + '%';
-
-        // 任务状态
-        var statusEl = document.getElementById('taskStatus');
-        if (state.taskActive) {
-            statusEl.textContent = '运行中';
-            statusEl.className = 'task-status-badge task-active';
-        } else {
-            statusEl.textContent = '未激活';
-            statusEl.className = 'task-status-badge task-inactive';
-        }
-
-        // 所有小车状态表（增量更新，不重建 DOM，视觉平滑）
-        var carList = state.cars || [];
-        var tbody = document.getElementById('carTableBody');
-        var existingRows = tbody.querySelectorAll('tr[data-car-id]');
-        var existingMap = {};
-        existingRows.forEach(function(r) { existingMap[r.getAttribute('data-car-id')] = r; });
-
+    // Car table (incremental)
+    var tbody = document.getElementById('carTableBody');
+    if (tbody) {
+        var carList = state.cars||[];
+        var existing = {}; tbody.querySelectorAll('tr[data-car-id]').forEach(function(r){existing[r.getAttribute('data-car-id')]=r});
+        var colCount = getRole() === 'configurator' ? 5 : 4;
         if (carList.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:var(--text-muted);padding:12px">等待数据...</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="'+colCount+'" style="text-align:center;color:var(--text3);padding:12px">等待数据...</td></tr>';
         } else {
-            // 清除无数据的占位行
-            var placeholder = tbody.querySelector('tr:not([data-car-id])');
-            if (placeholder) placeholder.remove();
-
-            var newCarIds = {};
-            for (var ci = 0; ci < carList.length; ci++) {
-                var c = carList[ci];
-                newCarIds[c.carId] = true;
-                var color = CAR_STATUS_COLORS[c.status] || '#999';
-                var label = CAR_STATUS_LABELS[c.status] || c.status;
-                var posStr = c.position ? '(' + c.position.x + ',' + c.position.y + ')' : '-';
-                var selectedClass = (selectedCarId === c.carId) ? ' selected' : '';
-
-                var row = existingMap[c.carId];
+            var ph = tbody.querySelector('tr:not([data-car-id])'); if(ph) ph.remove();
+            var newIds = {};
+            carList.forEach(function(c){
+                newIds[c.carId]=true;
+                var color = CAR_STATUS_COLORS[c.status]||'#999';
+                var label = CAR_STATUS_LABELS[c.status]||c.status;
+                var posStr = c.position ? '('+c.position.x+','+c.position.y+')' : '-';
+                var row = existing[c.carId];
                 if (!row) {
-                    // 新小车 → 创建行
-                    row = document.createElement('tr');
-                    row.setAttribute('data-car-id', c.carId);
-                    row.onclick = function(id) { return function() { selectCarFromTable(id); }; }(c.carId);
-                    row.innerHTML = '<td class="car-name"></td>' +
-                        '<td><span class="status-dot"></span><span class="status-label"></span></td>' +
-                        '<td class="car-pos"></td>' +
-                        '<td class="car-steps"></td>' +
-                        '<td><button style="font-size:11px;padding:2px 8px;background:#b91c1c;color:white;border:none;border-radius:4px;cursor:pointer" onclick="event.stopPropagation();removeCar(\'' + c.carId + '\')">✕</button></td>';
+                    row = document.createElement('tr'); row.setAttribute('data-car-id', c.carId);
+                    row.onclick = function(id){return function(){selectCarFromTable(id)}}(c.carId);
+                    row.innerHTML = '<td class="car-name"></td><td><span class="status-dot"></span><span class="status-label"></span></td><td class="car-pos"></td><td class="car-steps"></td>' +
+                        (colCount===5?'<td><button style="font-size:11px;padding:2px 8px;background:#b91c1c;color:#fff;border:none;border-radius:4px;cursor:pointer" onclick="event.stopPropagation();removeCar(\''+c.carId+'\')">✕</button></td>':'');
                     tbody.appendChild(row);
                 }
-
-                // 增量更新行内容（仅改变化的部分）
-                row.className = selectedClass;
+                row.className = selectedCarId===c.carId?'selected':'';
                 var cells = row.querySelectorAll('td');
-                if (cells[0].textContent !== c.carId) cells[0].textContent = c.carId;
-                var dot = cells[1].querySelector('.status-dot');
-                if (dot.style.background !== color) { dot.style.background = color; dot.style.color = color; }
-                var lbl = cells[1].querySelector('.status-label');
-                if (lbl.textContent !== label) lbl.textContent = label;
-                if (cells[2].textContent !== posStr) cells[2].textContent = posStr;
-                var stepsStr = String(c.steps || 0);
-                if (cells[3].textContent !== stepsStr) cells[3].textContent = stepsStr;
-            }
-
-            // 移除已不存在的小车行
-            existingRows.forEach(function(r) {
-                var id = r.getAttribute('data-car-id');
-                if (!newCarIds[id]) r.remove();
+                if(cells[0].textContent!==c.carId) cells[0].textContent=c.carId;
+                var dot=cells[1].querySelector('.status-dot'); if(dot.style.background!==color){dot.style.background=color;dot.style.color=color}
+                var lbl=cells[1].querySelector('.status-label'); if(lbl.textContent!==label) lbl.textContent=label;
+                if(cells[2].textContent!==posStr) cells[2].textContent=posStr;
+                if(cells[3].textContent!==String(c.steps||0)) cells[3].textContent = c.steps||0;
             });
+            Object.keys(existing).forEach(function(id){if(!newIds[id]) existing[id].remove()});
         }
-
-        // 完成标记
-        var badge = document.getElementById('completedBadge');
-        badge.className = state.completed ? 'completed-badge show' : 'completed-badge';
-
-        // 按钮状态
-        document.getElementById('btnStart').disabled = state.taskActive;
-        document.getElementById('btnPause').disabled = !state.taskActive;
     }
 
-    function selectCarFromTable(carId) {
-        selectedCarId = carId;
-        if (currentState) render(currentState);
-    }
+    var badge = document.getElementById('completedBadge'); if(badge) badge.className = state.completed ? 'completed-badge show' : 'completed-badge';
+    var bs=document.getElementById('btnStart'), bp=document.getElementById('btnPause');
+    if(bs) bs.disabled=state.taskActive; if(bp) bp.disabled=!state.taskActive;
+}
 
-    // ==================== 命令发送 ====================
-    var _startDebounce = false;
-    function sendCommand(type) {
-        if (!ws || ws.readyState !== WebSocket.OPEN) {
-            alert('WebSocket 未连接!');
-            return;
-        }
+// ====================================================================
+//  REGISTER (admin only)
+// ====================================================================
+async function doRegister() {
+    var u = document.getElementById('regUser').value.trim();
+    var p = document.getElementById('regPass').value;
+    var role = document.getElementById('regRole').value;
+    var m = document.getElementById('regMsg');
+    if (!u || !p) { m.textContent = '用户名和密码不能为空'; m.style.color = 'var(--red)'; return; }
+    if (u.length < 2 || p.length < 3) { m.textContent = '用户名至少2位，密码至少3位'; m.style.color = 'var(--red)'; return; }
 
-        if (type === 'START') {
-            if (_startDebounce) { console.log('START debounced'); return; }
-            _startDebounce = true;
-            setTimeout(function() { _startDebounce = false; }, 2000);
-        }
+    m.textContent = '创建中...'; m.style.color = 'var(--text3)';
+    try {
+        var r = await fetch('http://localhost:8890/api/auth/register', {
+            method:'POST',
+            headers:{
+                'Content-Type':'application/json',
+                'Authorization':'Bearer '+getToken()
+            },
+            body:JSON.stringify({username:u, password:p, role:role})
+        });
+        var j = await r.json();
+        if (j.success) { m.textContent = '用户 '+u+' 创建成功'; m.style.color = 'var(--green)';
+            document.getElementById('regUser').value = ''; document.getElementById('regPass').value = '';
+        } else { m.textContent = j.error || '注册失败'; m.style.color = 'var(--red)'; }
+    } catch(e) { m.textContent = '认证服务未启动'; m.style.color = 'var(--red)'; }
+}
 
-        var msg = { type: type };
+// ====================================================================
+//  REPLAY (analyst)
+// ====================================================================
+var replaySnapshots=[], replayIdx=0, replayPlaying=false, replayTimer=null, replaySpeed=1;
 
-        if (type === 'RESET') {
-            msg.mapWidth = parseInt(document.getElementById('mapWidth').value) || 30;
-            msg.mapHeight = parseInt(document.getElementById('mapHeight').value) || 30;
-            msg.carCount = parseInt(document.getElementById('carCount').value) || 4;
-            msg.obstacleDensity = parseFloat(document.getElementById('obstacleDensity').value) || 0.1;
-            msg.routeAlgorithm = 'BFS';
-        }
+async function replayLoad() {
+    try {
+        var r = await fetch('http://localhost:8891/api/replay/list');
+        replaySnapshots = await r.json();
+        document.getElementById('replayInfo').textContent = '共 '+replaySnapshots.length+' 帧快照';
+    } catch(e) { document.getElementById('replayInfo').textContent = '回放服务未启动'; }
+}
 
-        ws.send(JSON.stringify(msg));
-        console.log('Sent:', msg);
-    }
+function replayPlay() {
+    var btn = document.getElementById('replayPlayBtn');
+    if (replayPlaying) { clearInterval(replayTimer); replayPlaying = false; btn.textContent = '▶ 播放'; return; }
+    if (replaySnapshots.length === 0) { replayLoad(); return; }
+    replayPlaying = true; btn.textContent = '⏸ 暂停';
+    replayTimer = setInterval(function(){
+        if (replayIdx >= replaySnapshots.length-1) { clearInterval(replayTimer); replayPlaying = false; btn.textContent = '▶ 播放'; return; }
+        replayIdx++;
+        fetch('http://localhost:8891/api/replay/snapshot/'+replayIdx)
+            .then(function(r){return r.json()}).then(function(s){render(s)})
+            .catch(function(){});
+    }, 500 / replaySpeed);
+}
 
-    // ==================== 动态小车管理 ====================
-    function addCar() {
-        if (!ws || ws.readyState !== WebSocket.OPEN) {
-            alert('WebSocket 未连接!');
-            return;
-        }
-        // 生成下一个可用 carId
-        var cars = (currentState && currentState.cars) || [];
-        var used = {};
-        cars.forEach(function(c) { used[c.carId] = true; });
-        var nextId = 1;
-        while (used['Car' + String(nextId).padStart(3, '0')]) nextId++;
-        var carId = 'Car' + String(nextId).padStart(3, '0');
+// ====================================================================
+//  INIT
+// ====================================================================
+// Placeholder canvas draw
+setTimeout(function(){
+    var cv = document.getElementById('gridCanvas');
+    if (cv) { var cx = cv.getContext('2d'); cx.fillStyle='#0a1220'; cx.fillRect(0,0,cv.width,cv.height);
+        cx.fillStyle='#55657e'; cx.font='15px sans-serif'; cx.textAlign='center'; cx.fillText('等待连接...',cv.width/2,cv.height/2); }
+}, 50);
 
-        // 随机生成位置（地图中心附近，避开边界）
-        var mapW = (currentState && currentState.mapWidth) || 30;
-        var mapH = (currentState && currentState.mapHeight) || 30;
-        var x = Math.floor(mapW / 4) + Math.floor(Math.random() * mapW / 2);
-        var y = Math.floor(mapH / 4) + Math.floor(Math.random() * mapH / 2);
-
-        ws.send(JSON.stringify({ type: 'ADD_CAR', carId: carId, x: x, y: y }));
-        console.log('Sent ADD_CAR:', carId, 'pos=(' + x + ',' + y + ')');
-    }
-
-    function removeCar(carId) {
-        if (!ws || ws.readyState !== WebSocket.OPEN) {
-            alert('WebSocket 未连接!');
-            return;
-        }
-        if (!confirm('确认移除 ' + carId + '？')) return;
-        ws.send(JSON.stringify({ type: 'REMOVE_CAR', carId: carId }));
-        console.log('Sent REMOVE_CAR:', carId);
-    }
-
-    // ==================== 初始化 ====================
-    connectWebSocket();
-
-    var canvas = document.getElementById('gridCanvas');
-    var ctx = canvas.getContext('2d');
-    ctx.fillStyle = '#0a1220';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    ctx.fillStyle = '#55657e';
-    ctx.font = '15px Inter, Segoe UI, Microsoft YaHei, sans-serif';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText('连接中...', 300, 300);
-    </script>
+// Route on load
+routeGuard();
+</script>
 </body>
 </html>
