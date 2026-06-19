@@ -133,10 +133,10 @@ public class CommandReceiver extends WebSocketServer {
                     handleReset(json);
                     break;
                 case "START":
-                    handleStart();
+                    handleStart(json, state);
                     break;
                 case "PAUSE":
-                    handlePause();
+                    handlePause(json, state);
                     break;
                 case "GET_SNAPSHOT":
                     conn.send("{\"type\":\"ERROR\",\"message\":\"Replay not supported\"}");
@@ -148,7 +148,7 @@ public class CommandReceiver extends WebSocketServer {
                     handleRouteHide(conn);
                     break;
                 case "ADD_CAR":
-                    handleAddCar(json);
+                    handleAddCar(json, state);
                     break;
                 case "REMOVE_CAR":
                     handleRemoveCar(json);
@@ -201,26 +201,58 @@ public class CommandReceiver extends WebSocketServer {
                 task.get("mapWidth"), task.get("mapHeight"), task.get("carCount"));
     }
 
-    private void handleStart() {
-        // 1. 直接在 Redis 设置 taskActive=true，唤醒 Controller（绕过 taskQueue 死锁）
-        blackboard.setTaskActive(true);
-        // 2. 同时推送 START 任务（供 Controller 处理空队列初始化等边界情况）
-        blackboard.pushTask("START", (Map<String, String>) null);
-        LOG.info("START: 已设置 Redis taskActive=true + 推送 taskQueue");
+    private void handleStart(JSONObject json, ConnState state) {
+        String scope = json.getString("scope");
+        if ("personal".equals(scope)) {
+            String machineId = state != null ? state.machineId : null;
+            if (machineId == null) {
+                LOG.warn("START personal 但 machineId 为空");
+                return;
+            }
+            if (blackboard.isGlobalPaused()) {
+                LOG.warn("运行员 {} 尝试恢复但全局暂停中", machineId);
+                return;
+            }
+            blackboard.setOperatorPause(machineId, false);
+            LOG.info("运行员 {} 恢复了自己的车", machineId);
+        } else {
+            // 默认全局开始
+            blackboard.setGlobalPause(false);
+            blackboard.setTaskActive(true);
+            LOG.info("全局开始");
+        }
     }
 
-    private void handlePause() {
-        blackboard.setTaskActive(false);
-        blackboard.pushTask("PAUSE", (Map<String, String>) null);
-        LOG.info("PAUSE: 已设置 Redis taskActive=false + 推送 taskQueue");
+    private void handlePause(JSONObject json, ConnState state) {
+        String scope = json.getString("scope");
+        if ("personal".equals(scope)) {
+            String machineId = state != null ? state.machineId : null;
+            if (machineId == null) {
+                LOG.warn("PAUSE personal 但 machineId 为空");
+                return;
+            }
+            blackboard.setOperatorPause(machineId, true);
+            LOG.info("运行员 {} 暂停了自己的车", machineId);
+        } else {
+            // 默认全局暂停
+            blackboard.setGlobalPause(true);
+            blackboard.setTaskActive(false);
+            LOG.info("全局暂停");
+        }
     }
 
     // ==================== 动态小车增删 ====================
 
-    private void handleAddCar(JSONObject json) {
+    private void handleAddCar(JSONObject json, ConnState state) {
         String carId = json.getString("carId");
         int x = json.getIntValue("x", 15);
         int y = json.getIntValue("y", 15);
+
+        // 写入 car owner
+        String machine = json.getString("machine");
+        if (machine != null && !machine.isEmpty()) {
+            blackboard.setCarOwner(carId, machine);
+        }
 
         // 1. 发送 FORWARD_CONFIG(addCar=true) 到 TaskConfigurator
         try {
@@ -231,6 +263,7 @@ public class CommandReceiver extends WebSocketServer {
             data.put("y", y);
             data.put("mapWidth", blackboard.getMapWidth());
             data.put("mapHeight", blackboard.getMapHeight());
+            data.put("machine", machine);
             MQMessage msg = new MQMessage("FORWARD_CONFIG", data);
             messageBus.sendToQueue(ConfigConstants.QUEUE_TASK_CONFIG_CMD, msg);
         } catch (Exception e) {
@@ -240,7 +273,7 @@ public class CommandReceiver extends WebSocketServer {
         // 2. 同时 push ADD_CAR 到 taskQueue 通知 Controller
         Map<String, String> extra = java.util.Map.of("x", String.valueOf(x), "y", String.valueOf(y));
         blackboard.pushTask("ADD_CAR", carId, extra);
-        LOG.info("ADD_CAR: carId={}, pos=({},{}), 已推送到 taskQueue", carId, x, y);
+        LOG.info("ADD_CAR: carId={}, pos=({},{}), machine={}, 已推送到 taskQueue", carId, x, y, machine);
     }
 
     private void handleRemoveCar(JSONObject json) {
