@@ -540,53 +540,70 @@ function getColor(cell, x, y, obstacles) {
     return '#1a2436';
 }
 
+var _lastFullMap = null;
+var _CHUNK_SIZE = 8;
+
 function render(state) {
     if (!state) return;
     var ctx = document.getElementById('gridCanvas').getContext('2d');
-    var mapView = state.mapView || [];
-    var rows = mapView.length, cols = rows > 0 ? mapView[0].length : 40;
+    var rows = state.mapHeight || (state.mapView ? state.mapView.length : 40);
+    var cols = state.mapWidth  || (state.mapView && rows > 0 ? state.mapView[0].length : 40);
     var cellSize = Math.floor(640 / Math.max(cols, rows));
     var W = cols * cellSize, H = rows * cellSize;
     var canvas = document.getElementById('gridCanvas');
-    canvas.width = W; canvas.height = H;
+
+    var obs = {}; (state.obstacles||[]).forEach(function(p){obs[p.x+','+p.y]=true});
 
     // Double buffer
     var off = document.createElement('canvas'); off.width = W; off.height = H;
     var c = off.getContext('2d');
 
-    var obs = {}; (state.obstacles||[]).forEach(function(p){obs[p.x+','+p.y]=true});
+    if (state.fullMap || !_lastFullMap) {
+        canvas.width = W; canvas.height = H;  // 仅全量帧清空画布
+        // 全量渲染 grid cells
+        for (var y = 0; y < rows; y++)
+            for (var x = 0; x < cols; x++) {
+                c.fillStyle = obs[x+','+y] ? '#5c3d2e' : (state.mapView[y]&&state.mapView[y][x] ? '#1e4d3a' : '#1a2436');
+                c.fillRect(x*cellSize, y*cellSize, cellSize-1, cellSize-1);
+            }
+        _lastFullMap = state.mapView;
+    } else if (state.changedChunks) {
+        // 增量：复制当前 canvas 到 offscreen 保留历史，再覆盖 changed chunks
+        c.drawImage(canvas, 0, 0);
+        state.changedChunks.forEach(function(chunk) {
+            for (var ly = 0; ly < chunk.data.length; ly++) {
+                for (var lx = 0; lx < chunk.data[ly].length; lx++) {
+                    var gx = chunk.chunkCol * _CHUNK_SIZE + lx, gy = chunk.chunkRow * _CHUNK_SIZE + ly;
+                    if (gy < rows && gx < cols) {
+                        _lastFullMap[gy][gx] = chunk.data[ly][lx];
+                        c.fillStyle = obs[gx+','+gy] ? '#5c3d2e' : (chunk.data[ly][lx] ? '#1e4d3a' : '#1a2436');
+                        c.fillRect(gx*cellSize, gy*cellSize, cellSize-1, cellSize-1);
+                    }
+                }
+            }
+        });
+    }
 
-    // Grid cells
-    for (var y = 0; y < rows; y++)
-        for (var x = 0; x < cols; x++) {
-            c.fillStyle = obs[x+','+y] ? '#5c3d2e' : (mapView[y]&&mapView[y][x] ? '#1e4d3a' : '#1a2436');
-            c.fillRect(x*cellSize, y*cellSize, cellSize-1, cellSize-1);
-        }
-
-    // Cars
+    // Cars (always redraw on top)
     (state.cars||[]).forEach(function(car){
         if (!car.position) return;
         var cx = car.position.x*cellSize+cellSize/2, cy = car.position.y*cellSize+cellSize/2;
         var r = Math.max(cellSize/2-2, 4);
         var color = CAR_STATUS_COLORS[car.status] || '#FFF';
 
-        // Highlight ring
         if (selectedCarId === car.carId) {
             c.beginPath(); c.arc(cx,cy,r+5,0,2*Math.PI); c.strokeStyle='#f59e0b'; c.lineWidth=2.5;
             c.shadowColor='#f59e0b'; c.shadowBlur=10; c.globalAlpha=0.9; c.stroke(); c.shadowBlur=0; c.globalAlpha=1;
         }
-        // Target
         if (car.target && car.target.x>=0 && car.target.y>=0) {
             var tx=car.target.x*cellSize+cellSize/2, ty=car.target.y*cellSize+cellSize/2;
             c.beginPath(); c.setLineDash([3,3]); c.moveTo(cx,cy); c.lineTo(tx,ty);
             c.strokeStyle=color; c.globalAlpha=0.4; c.lineWidth=1; c.stroke(); c.setLineDash([]); c.globalAlpha=1;
         }
-        // Car circle
         var grad = c.createRadialGradient(cx-r*0.3,cy-r*0.3,r*0.1,cx,cy,r);
         grad.addColorStop(0,'#fff'); grad.addColorStop(0.4,color); grad.addColorStop(1,'rgba(0,0,0,0.4)');
         c.beginPath(); c.arc(cx,cy,r,0,2*Math.PI); c.fillStyle=grad; c.fill();
         c.strokeStyle='rgba(255,255,255,0.5)'; c.lineWidth=1.5; c.stroke();
-        // Label
         c.fillStyle='#FFF'; c.font='bold '+(cellSize*0.5)+'px sans-serif'; c.textAlign='center'; c.textBaseline='middle';
         c.fillText(car.carId?car.carId.slice(-1):'?', cx, cy);
     });

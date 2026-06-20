@@ -302,12 +302,13 @@ public class CommandReceiver extends WebSocketServer {
         int x = json.getIntValue("x");
         int y = json.getIntValue("y");
         try {
-            // 切换障碍物状态：SETBIT翻转
-            try (var jedis = blackboard.getJedis()) {
-                boolean cur = jedis.getbit(ConfigConstants.KEY_MAP_BLOCKED, (long) y * blackboard.getMapWidth() + x);
-                jedis.setbit(ConfigConstants.KEY_MAP_BLOCKED, (long) y * blackboard.getMapWidth() + x, !cur);
-                LOG.info("障碍物切换: ({},{}) {} → {}", x, y, cur ? "ON" : "OFF", !cur ? "ON" : "OFF");
+            boolean cur = blackboard.isBlocked(x, y);
+            if (cur) {
+                blackboard.clearBlocked(x, y);
+            } else {
+                blackboard.setBlocked(x, y);
             }
+            LOG.info("障碍物切换: ({},{}) {} -> {}", x, y, cur ? "ON" : "OFF", !cur ? "ON" : "OFF");
         } catch (Exception e) {
             LOG.error("切换障碍物失败", e);
         }

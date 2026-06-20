@@ -265,6 +265,7 @@ public class TaskConfiguratorMain {
         int placed = 0;
         int maxAttempts = targetObstacleCount * 20;
         int attempts = 0;
+        java.util.List<Point> obstacles = new java.util.ArrayList<>();
 
         while (placed < targetObstacleCount && attempts < maxAttempts) {
             int x = random.nextInt(mapWidth);
@@ -273,7 +274,7 @@ public class TaskConfiguratorMain {
             attempts++;
 
             if (!forbidden.contains(p) && !blackboard.isBlocked(x, y)) {
-                blackboard.setBlocked(x, y);
+                obstacles.add(p);
                 placed++;
             }
         }
@@ -281,6 +282,9 @@ public class TaskConfiguratorMain {
         if (placed < targetObstacleCount) {
             LOG.warn("障碍物生成不足: 目标={}, 实际={}", targetObstacleCount, placed);
         }
+
+        // Pipeline 批量写入所有障碍物（分块聚合）
+        blackboard.setBlockedBatch(obstacles);
         LOG.info("已生成 {} 个障碍物 (目标: {})", placed, targetObstacleCount);
         return placed;
     }

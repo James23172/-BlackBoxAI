@@ -30,6 +30,7 @@ public class MessageBusClient {
 
     private Connection connection;
     private Channel channel;
+    private final Object sendLock = new Object();
 
     public MessageBusClient() {
         this(ConfigConstants.RABBITMQ_HOST, ConfigConstants.RABBITMQ_PORT,
@@ -68,7 +69,9 @@ public class MessageBusClient {
      * @param queueName 队列名
      */
     public void declareQueue(String queueName) throws IOException {
-        channel.queueDeclare(queueName, true, false, false, null);
+        synchronized (sendLock) {
+            channel.queueDeclare(queueName, true, false, false, null);
+        }
         log.info("队列已声明: {}", queueName);
     }
 
@@ -76,7 +79,9 @@ public class MessageBusClient {
      * 声明 Fanout Exchange（用于广播）
      */
     public void declareFanoutExchange(String exchangeName) throws IOException {
-        channel.exchangeDeclare(exchangeName, BuiltinExchangeType.FANOUT, true);
+        synchronized (sendLock) {
+            channel.exchangeDeclare(exchangeName, BuiltinExchangeType.FANOUT, true);
+        }
         log.info("Fanout Exchange 已声明: {}", exchangeName);
     }
 
@@ -84,7 +89,9 @@ public class MessageBusClient {
      * 绑定队列到 Fanout Exchange
      */
     public void bindQueueToExchange(String queueName, String exchangeName) throws IOException {
-        channel.queueBind(queueName, exchangeName, "");
+        synchronized (sendLock) {
+            channel.queueBind(queueName, exchangeName, "");
+        }
         log.info("队列 {} 已绑定到 Exchange {}", queueName, exchangeName);
     }
 
@@ -92,15 +99,17 @@ public class MessageBusClient {
      * 声明所有系统队列（TaskConfigurator 启动时调用）
      */
     public void declareAllSystemQueues() throws IOException {
-        declareQueue(ConfigConstants.QUEUE_NAVIGATOR_4_CAR_ID);
-        declareQueue(ConfigConstants.QUEUE_TARGET_PLANNER_CMD);
-        declareQueue(ConfigConstants.QUEUE_TASK_CONFIG_CMD);
-        // 声明所有可能的小车队列（Car:001 ~ Car:004）
-        for (int i = 1; i <= 4; i++) {
-            declareQueue(ConfigConstants.carQueueName(String.format("Car%03d", i)));
+        synchronized (sendLock) {
+            declareQueue(ConfigConstants.QUEUE_NAVIGATOR_4_CAR_ID);
+            declareQueue(ConfigConstants.QUEUE_TARGET_PLANNER_CMD);
+            declareQueue(ConfigConstants.QUEUE_TASK_CONFIG_CMD);
+            // 声明所有可能的小车队列（Car:001 ~ Car:004）
+            for (int i = 1; i <= 4; i++) {
+                declareQueue(ConfigConstants.carQueueName(String.format("Car%03d", i)));
+            }
+            // 广播 Exchange
+            declareFanoutExchange(ConfigConstants.EXCHANGE_UPDATE_VIEW);
         }
-        // 广播 Exchange
-        declareFanoutExchange(ConfigConstants.EXCHANGE_UPDATE_VIEW);
         log.info("所有系统队列/Exchange 已声明");
     }
 
@@ -114,9 +123,11 @@ public class MessageBusClient {
     public void sendToQueue(String queueName, MQMessage message) {
         try {
             String json = JSON.toJSONString(message);
-            channel.basicPublish("", queueName,
-                    MessageProperties.PERSISTENT_TEXT_PLAIN,
-                    json.getBytes(StandardCharsets.UTF_8));
+            synchronized (sendLock) {
+                channel.basicPublish("", queueName,
+                        MessageProperties.PERSISTENT_TEXT_PLAIN,
+                        json.getBytes(StandardCharsets.UTF_8));
+            }
             log.debug("发送 → {}: {}", queueName, message.getCmd());
         } catch (IOException e) {
             log.error("发送消息失败 → {}: {}", queueName, e.getMessage(), e);
@@ -136,10 +147,12 @@ public class MessageBusClient {
     public void sendRaw(String queueName, String json) {
         try {
             // 兜底声明队列（持久化），防止 RabbitMQ 重启后队列丢失导致消息静默丢弃
-            channel.queueDeclare(queueName, true, false, false, null);
-            channel.basicPublish("", queueName,
-                    MessageProperties.PERSISTENT_TEXT_PLAIN,
-                    json.getBytes(StandardCharsets.UTF_8));
+            synchronized (sendLock) {
+                channel.queueDeclare(queueName, true, false, false, null);
+                channel.basicPublish("", queueName,
+                        MessageProperties.PERSISTENT_TEXT_PLAIN,
+                        json.getBytes(StandardCharsets.UTF_8));
+            }
             log.debug("发送原始 → {}", queueName);
         } catch (IOException e) {
             log.error("发送原始消息失败 → {}: {}", queueName, e.getMessage(), e);
@@ -151,10 +164,11 @@ public class MessageBusClient {
      */
     public void fanoutPublish(String exchangeName, String message) {
         try {
-            channel.exchangeDeclare(exchangeName, BuiltinExchangeType.FANOUT, true);
-            channel.basicPublish(exchangeName, "",
-                    MessageProperties.PERSISTENT_TEXT_PLAIN,
-                    message.getBytes(StandardCharsets.UTF_8));
+            synchronized (sendLock) {
+                channel.basicPublish(exchangeName, "",
+                        MessageProperties.PERSISTENT_TEXT_PLAIN,
+                        message.getBytes(StandardCharsets.UTF_8));
+            }
             log.debug("Fanout广播 → {}", exchangeName);
         } catch (IOException e) {
             log.error("Fanout广播失败 → {}: {}", exchangeName, e.getMessage(), e);
@@ -167,9 +181,11 @@ public class MessageBusClient {
     public void broadcast(String exchangeName, MQMessage message) {
         try {
             String json = JSON.toJSONString(message);
-            channel.basicPublish(exchangeName, "",
-                    MessageProperties.PERSISTENT_TEXT_PLAIN,
-                    json.getBytes(StandardCharsets.UTF_8));
+            synchronized (sendLock) {
+                channel.basicPublish(exchangeName, "",
+                        MessageProperties.PERSISTENT_TEXT_PLAIN,
+                        json.getBytes(StandardCharsets.UTF_8));
+            }
             log.debug("广播 → {}: {}", exchangeName, message.getCmd());
         } catch (IOException e) {
             log.error("广播失败 → {}: {}", exchangeName, e.getMessage(), e);

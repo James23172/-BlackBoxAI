@@ -45,12 +45,144 @@ public class BlackboardClient {
     private byte[] cachedMapBlockedBytes;
     private long cachedMapBlockedVersion = -1;
 
+    // ===== 分块缓存 =====
+    private boolean[][][][] chunkViewCache;
+    private boolean[][][][] chunkBlockedCache;
+    private long[][] chunkViewVersions;
+    private long[][] chunkBlockedVersions;
+    private int totalChunkRows = -1;
+    private int totalChunkCols = -1;
+
     /** 强制失效所有 bitmap 缓存（跨进程感知，Navigator 规划前调用） */
     public void invalidateBitmapCache() {
         this.cachedMapViewBytes = null;
         this.cachedMapViewVersion = -1;
         this.cachedMapBlockedBytes = null;
         this.cachedMapBlockedVersion = -1;
+        invalidateAllChunkCache();
+    }
+
+    // ==================== 分块缓存管理 ====================
+
+    private void ensureChunkCache(int width, int height) {
+        int newTR = (height + ConfigConstants.CHUNK_SIZE - 1) / ConfigConstants.CHUNK_SIZE;
+        int newTC = (width  + ConfigConstants.CHUNK_SIZE - 1) / ConfigConstants.CHUNK_SIZE;
+        if (newTR == totalChunkRows && newTC == totalChunkCols
+                && chunkViewCache != null && chunkBlockedCache != null) {
+            return;
+        }
+        chunkViewCache    = new boolean[newTR][newTC][][];
+        chunkBlockedCache = new boolean[newTR][newTC][][];
+        chunkViewVersions    = new long[newTR][newTC];
+        chunkBlockedVersions = new long[newTR][newTC];
+        totalChunkRows = newTR;
+        totalChunkCols = newTC;
+    }
+
+    public void invalidateAllChunkCache() {
+        chunkViewCache = null;
+        chunkBlockedCache = null;
+        chunkViewVersions = null;
+        chunkBlockedVersions = null;
+        totalChunkRows = -1;
+        totalChunkCols = -1;
+    }
+
+    private long chunkOffset(int lx, int ly) {
+        return (long) ly * ConfigConstants.CHUNK_SIZE + lx;
+    }
+
+    private byte[] getChunkBytes(String key) {
+        try (Jedis jedis = pool.getResource()) {
+            byte[] data = jedis.get(key.getBytes());
+            int cs = ConfigConstants.CHUNK_SIZE;
+            int expectedBytes = (cs * cs + 7) / 8;
+            if (data == null) {
+                data = new byte[expectedBytes];
+            } else if (data.length < expectedBytes) {
+                byte[] newData = new byte[expectedBytes];
+                System.arraycopy(data, 0, newData, 0, data.length);
+                data = newData;
+            }
+            return data;
+        } catch (Exception e) {
+            log.warn("getChunkBytes failed for {}", key, e);
+            return new byte[(ConfigConstants.CHUNK_SIZE * ConfigConstants.CHUNK_SIZE + 7) / 8];
+        }
+    }
+
+    private boolean[][] decodeCachedChunk(byte[] data) {
+        return decodeCachedBitmap(data, ConfigConstants.CHUNK_SIZE, ConfigConstants.CHUNK_SIZE);
+    }
+
+    private boolean[][] fetchViewChunk(int cr, int cc) {
+        return decodeCachedChunk(getChunkBytes(ConfigConstants.mapViewChunkKey(cr, cc)));
+    }
+
+    private boolean[][] fetchBlockedChunk(int cr, int cc) {
+        return decodeCachedChunk(getChunkBytes(ConfigConstants.mapBlockedChunkKey(cr, cc)));
+    }
+
+    private long getViewChunkVersion(int cr, int cc) {
+        try (Jedis jedis = pool.getResource()) {
+            String val = jedis.get(ConfigConstants.mapViewChunkVerKey(cr, cc));
+            return val != null ? Long.parseLong(val) : 0;
+        }
+    }
+
+    private long getBlockedChunkVersion(int cr, int cc) {
+        try (Jedis jedis = pool.getResource()) {
+            String val = jedis.get(ConfigConstants.mapBlockedChunkVerKey(cr, cc));
+            return val != null ? Long.parseLong(val) : 0;
+        }
+    }
+
+    private boolean[][] getOrFetchViewChunk(int cr, int cc) {
+        long currentVer = getViewChunkVersion(cr, cc);
+        if (chunkViewCache[cr][cc] == null
+                || chunkViewVersions[cr][cc] != currentVer) {
+            chunkViewCache[cr][cc] = fetchViewChunk(cr, cc);
+            chunkViewVersions[cr][cc] = currentVer;
+        }
+        return chunkViewCache[cr][cc];
+    }
+
+    private boolean[][] getOrFetchBlockedChunk(int cr, int cc) {
+        long currentVer = getBlockedChunkVersion(cr, cc);
+        if (chunkBlockedCache[cr][cc] == null
+                || chunkBlockedVersions[cr][cc] != currentVer) {
+            chunkBlockedCache[cr][cc] = fetchBlockedChunk(cr, cc);
+            chunkBlockedVersions[cr][cc] = currentVer;
+        }
+        return chunkBlockedCache[cr][cc];
+    }
+
+    public MapChunk getViewChunkData(int cr, int cc) {
+        refreshMapConfig();
+        ensureChunkCache(mapWidth, mapHeight);
+        boolean[][] data = getOrFetchViewChunk(cr, cc);
+        MapChunk mc = new MapChunk();
+        mc.chunkRow = cr;
+        mc.chunkCol = cc;
+        mc.data = data;
+        mc.version = chunkViewVersions[cr][cc];
+        return mc;
+    }
+
+    public List<ChunkId> popModifiedChunks() {
+        String script = "local m=redis.call('SMEMBERS',KEYS[1]);redis.call('DEL',KEYS[1]);return m";
+        try (Jedis jedis = pool.getResource()) {
+            @SuppressWarnings("unchecked")
+            List<String> raw = (List<String>) jedis.eval(script,
+                    java.util.Collections.singletonList(ConfigConstants.KEY_CHUNKS_MODIFIED),
+                    java.util.Collections.emptyList());
+            List<ChunkId> result = new java.util.ArrayList<>();
+            for (String s : raw) {
+                String[] parts = s.split(":");
+                result.add(new ChunkId(parts[0], Integer.parseInt(parts[1]), Integer.parseInt(parts[2])));
+            }
+            return result;
+        }
     }
 
     public BlackboardClient(String host, int port) {
@@ -160,61 +292,149 @@ public class BlackboardClient {
         return grid;
     }
 
-    /** 用 GET 一次性获取 bitmap 全部字节，解码为 boolean 二维数组（替代 N² 次 GETBIT） */
+    /** @deprecated 分块后由 chunk 聚合方法替代，保留兼容旧调用 */
+    @Deprecated
     public boolean[][] getBitmapAsGrid(String key, int width, int height) {
         byte[] data = getBitmapBytes(key);
         return decodeCachedBitmap(data, width, height);
     }
 
-    /** 获取整个地图的探索状态（boolean 二维数组），带跨进程缓存 */
+    /** 获取整个地图的探索状态（boolean 二维数组），chunk 聚合 + 二次 Pipeline */
     public boolean[][] getMapView() {
         refreshMapConfig();
-        long currentVersion = getBitmapVersion(ConfigConstants.KEY_MAP_VIEW_VERSION);
-        if (cachedMapViewBytes != null && currentVersion == cachedMapViewVersion) {
-            return decodeCachedBitmap(cachedMapViewBytes, mapWidth, mapHeight);
+        ensureChunkCache(mapWidth, mapHeight);
+
+        // Pass 1: Pipeline 批量读取所有 chunk 版本号
+        long[][] currentVersions = new long[totalChunkRows][totalChunkCols];
+        try (Jedis jedis = pool.getResource()) {
+            var pipeline = jedis.pipelined();
+            var responses = new java.util.ArrayList<java.util.List<redis.clients.jedis.Response<String>>>();
+            for (int cr = 0; cr < totalChunkRows; cr++) {
+                var row = new java.util.ArrayList<redis.clients.jedis.Response<String>>();
+                for (int cc = 0; cc < totalChunkCols; cc++) {
+                    row.add(pipeline.get(ConfigConstants.mapViewChunkVerKey(cr, cc)));
+                }
+                responses.add(row);
+            }
+            pipeline.sync();
+            for (int cr = 0; cr < totalChunkRows; cr++) {
+                for (int cc = 0; cc < totalChunkCols; cc++) {
+                    String val = responses.get(cr).get(cc).get();
+                    currentVersions[cr][cc] = val != null ? Long.parseLong(val) : 0;
+                }
+            }
         }
-        // 缓存未命中：重新读取
-        byte[] data = getBitmapBytes(ConfigConstants.KEY_MAP_VIEW);
-        cachedMapViewBytes = data;
-        cachedMapViewVersion = currentVersion;
-        return decodeCachedBitmap(data, mapWidth, mapHeight);
+
+        // Pass 2: 仅版本号变化的 chunk 批量 GET bitmap
+        java.util.List<ChunkId> stale = new java.util.ArrayList<>();
+        for (int cr = 0; cr < totalChunkRows; cr++) {
+            for (int cc = 0; cc < totalChunkCols; cc++) {
+                if (chunkViewCache[cr][cc] == null
+                        || chunkViewVersions[cr][cc] != currentVersions[cr][cc]) {
+                    stale.add(new ChunkId("v", cr, cc));
+                }
+            }
+        }
+        if (!stale.isEmpty()) {
+            try (Jedis jedis = pool.getResource()) {
+                var pipeline = jedis.pipelined();
+                java.util.Map<ChunkId, redis.clients.jedis.Response<byte[]>> fresp = new java.util.LinkedHashMap<>();
+                for (ChunkId ck : stale) {
+                    fresp.put(ck, pipeline.get(ck.toKey().getBytes()));
+                }
+                pipeline.sync();
+                for (ChunkId ck : stale) {
+                    byte[] raw = fresp.get(ck).get();
+                    chunkViewCache[ck.row][ck.col] = decodeCachedChunk(raw);
+                    chunkViewVersions[ck.row][ck.col] = currentVersions[ck.row][ck.col];
+                }
+            }
+        }
+
+        // Pass 3: 内存拼接
+        boolean[][] grid = new boolean[mapHeight][mapWidth];
+        for (int y = 0; y < mapHeight; y++) {
+            int cr = y / ConfigConstants.CHUNK_SIZE;
+            int ly = y % ConfigConstants.CHUNK_SIZE;
+            boolean[][] rowChunk = chunkViewCache[cr][0];
+            boolean[] row = rowChunk[ly];
+            int cc = 0;
+            for (int x = 0; x < mapWidth; x++) {
+                int ncc = x / ConfigConstants.CHUNK_SIZE;
+                if (ncc != cc) {
+                    cc = ncc;
+                    rowChunk = chunkViewCache[cr][cc];
+                    row = rowChunk[ly];
+                }
+                grid[y][x] = row[x % ConfigConstants.CHUNK_SIZE];
+            }
+        }
+        return grid;
     }
 
     /** 设置地图某位的探索状态 */
     public void setMapViewBit(int x, int y) {
+        int cr = y / ConfigConstants.CHUNK_SIZE, cc = x / ConfigConstants.CHUNK_SIZE;
+        int lx = x % ConfigConstants.CHUNK_SIZE, ly = y % ConfigConstants.CHUNK_SIZE;
         try (Jedis jedis = pool.getResource()) {
-            jedis.setbit(ConfigConstants.KEY_MAP_VIEW, bitmapOffset(x, y), true);
+            jedis.setbit(ConfigConstants.mapViewChunkKey(cr, cc), chunkOffset(lx, ly), true);
             removeFromUnexploredSet(jedis, x, y);
-            jedis.incr(ConfigConstants.KEY_MAP_VIEW_VERSION);
+            jedis.incr(ConfigConstants.mapViewChunkVerKey(cr, cc));
+            jedis.sadd(ConfigConstants.KEY_CHUNKS_MODIFIED, "v:" + cr + ":" + cc);
+        }
+        if (chunkViewCache != null && cr < chunkViewCache.length
+                && cc < chunkViewCache[cr].length) {
+            chunkViewCache[cr][cc] = null;
         }
     }
 
     /** 检查 (x,y) 是否已被探索 */
     public boolean isExplored(int x, int y) {
+        int cr = y / ConfigConstants.CHUNK_SIZE, cc = x / ConfigConstants.CHUNK_SIZE;
+        int lx = x % ConfigConstants.CHUNK_SIZE, ly = y % ConfigConstants.CHUNK_SIZE;
         try (Jedis jedis = pool.getResource()) {
-            return jedis.getbit(ConfigConstants.KEY_MAP_VIEW, bitmapOffset(x, y));
+            return jedis.getbit(ConfigConstants.mapViewChunkKey(cr, cc), chunkOffset(lx, ly));
         }
     }
 
-    /** 3×3 点亮：Pipeline 批量写入，保证 9 格原子性，避免其他进程读到半成品 */
+    /** 3x3 点亮：Pipeline 批量写入 chunk，保证 9 格原子性，避免其他进程读到半成品 */
     public void illuminateArea(int cx, int cy) {
         refreshMapConfig();
+        ensureChunkCache(mapWidth, mapHeight);
         int r = ConfigConstants.ILLUMINATE_RADIUS;
         try (Jedis jedis = pool.getResource()) {
             var pipeline = jedis.pipelined();
+            java.util.Set<String> touchedChunks = new java.util.LinkedHashSet<>();
             for (int dy = -r; dy <= r; dy++) {
                 for (int dx = -r; dx <= r; dx++) {
                     int nx = cx + dx;
                     int ny = cy + dy;
                     if (nx >= 0 && nx < mapWidth && ny >= 0 && ny < mapHeight
                             && !isBlocked(nx, ny)) {  // 障碍物不计入已探索，避免探索率超100%
-                        pipeline.setbit(ConfigConstants.KEY_MAP_VIEW, bitmapOffset(nx, ny), true);
+                        int cr = ny / ConfigConstants.CHUNK_SIZE, cc = nx / ConfigConstants.CHUNK_SIZE;
+                        int lx = nx % ConfigConstants.CHUNK_SIZE, ly = ny % ConfigConstants.CHUNK_SIZE;
+                        pipeline.setbit(ConfigConstants.mapViewChunkKey(cr, cc), chunkOffset(lx, ly), true);
                         pipeline.srem(ConfigConstants.KEY_UNEXPLORED_SET, nx + "," + ny);
+                        touchedChunks.add("v:" + cr + ":" + cc);
                     }
                 }
             }
-            pipeline.incr(ConfigConstants.KEY_MAP_VIEW_VERSION);
+            for (String ck : touchedChunks) {
+                String[] parts = ck.split(":");
+                pipeline.incr(ConfigConstants.mapViewChunkVerKey(
+                        Integer.parseInt(parts[1]), Integer.parseInt(parts[2])));
+                pipeline.sadd(ConfigConstants.KEY_CHUNKS_MODIFIED, ck);
+            }
             pipeline.sync();
+            // 失效本地缓存
+            for (String ck : touchedChunks) {
+                String[] parts = ck.split(":");
+                int cr = Integer.parseInt(parts[1]), cc = Integer.parseInt(parts[2]);
+                if (chunkViewCache != null && cr < chunkViewCache.length
+                        && cc < chunkViewCache[cr].length) {
+                    chunkViewCache[cr][cc] = null;
+                }
+            }
         }
     }
 
@@ -223,56 +443,179 @@ public class BlackboardClient {
     /** 检查 (x,y) 是否被阻塞（静态障碍物或动态小车） */
     public boolean isBlocked(int x, int y) {
         refreshMapConfig();
+        int cr = y / ConfigConstants.CHUNK_SIZE, cc = x / ConfigConstants.CHUNK_SIZE;
+        int lx = x % ConfigConstants.CHUNK_SIZE, ly = y % ConfigConstants.CHUNK_SIZE;
         try (Jedis jedis = pool.getResource()) {
-            return jedis.getbit(ConfigConstants.KEY_MAP_BLOCKED, bitmapOffset(x, y));
+            return jedis.getbit(ConfigConstants.mapBlockedChunkKey(cr, cc), chunkOffset(lx, ly));
         }
+    }
+
+    /** 批量初始化障碍物（TaskConfigurator 专用），Pipeline 聚合写入 */
+    public void setBlockedBatch(List<Point> obstacles) {
+        refreshMapConfig();
+        java.util.Map<String, byte[]> chunkBuffers = new java.util.LinkedHashMap<>();
+        java.util.Map<String, String> chunkTypeMap = new java.util.LinkedHashMap<>();
+        for (Point obs : obstacles) {
+            int cr = obs.y / ConfigConstants.CHUNK_SIZE, cc = obs.x / ConfigConstants.CHUNK_SIZE;
+            int lx = obs.x % ConfigConstants.CHUNK_SIZE, ly = obs.y % ConfigConstants.CHUNK_SIZE;
+            String key = ConfigConstants.mapBlockedChunkKey(cr, cc);
+            byte[] buf = chunkBuffers.get(key);
+            if (buf == null) {
+                buf = new byte[(ConfigConstants.CHUNK_SIZE * ConfigConstants.CHUNK_SIZE + 7) / 8];
+                chunkBuffers.put(key, buf);
+                chunkTypeMap.put(key, "b:" + cr + ":" + cc);
+            }
+            int offset = (int) chunkOffset(lx, ly);
+            buf[offset / 8] |= (1 << (7 - (offset % 8)));
+        }
+        try (Jedis jedis = pool.getResource()) {
+            var pipeline = jedis.pipelined();
+            for (java.util.Map.Entry<String, byte[]> entry : chunkBuffers.entrySet()) {
+                pipeline.set(entry.getKey().getBytes(), entry.getValue());
+                String verKey = entry.getKey() + ":ver";
+                pipeline.set(verKey, "1");
+                pipeline.sadd(ConfigConstants.KEY_CHUNKS_MODIFIED, chunkTypeMap.get(entry.getKey()));
+            }
+            // 同步从 unexplored:set 移除
+            for (Point obs : obstacles) {
+                pipeline.srem(ConfigConstants.KEY_UNEXPLORED_SET, obs.x + "," + obs.y);
+            }
+            pipeline.sync();
+        }
+        invalidateAllChunkCache();
     }
 
     /** 设置障碍物，同步从 unexplored:set 移除 */
     public void setBlocked(int x, int y) {
         refreshMapConfig();
+        int cr = y / ConfigConstants.CHUNK_SIZE, cc = x / ConfigConstants.CHUNK_SIZE;
+        int lx = x % ConfigConstants.CHUNK_SIZE, ly = y % ConfigConstants.CHUNK_SIZE;
         try (Jedis jedis = pool.getResource()) {
-            jedis.setbit(ConfigConstants.KEY_MAP_BLOCKED, bitmapOffset(x, y), true);
+            jedis.setbit(ConfigConstants.mapBlockedChunkKey(cr, cc), chunkOffset(lx, ly), true);
             removeFromUnexploredSet(jedis, x, y);
-            jedis.incr(ConfigConstants.KEY_MAP_BLOCKED_VERSION);
+            jedis.incr(ConfigConstants.mapBlockedChunkVerKey(cr, cc));
+            jedis.sadd(ConfigConstants.KEY_CHUNKS_MODIFIED, "b:" + cr + ":" + cc);
+        }
+        if (chunkBlockedCache != null && cr < chunkBlockedCache.length
+                && cc < chunkBlockedCache[cr].length) {
+            chunkBlockedCache[cr][cc] = null;
         }
     }
 
     /** 清除障碍物 */
     public void clearBlocked(int x, int y) {
         refreshMapConfig();
+        int cr = y / ConfigConstants.CHUNK_SIZE, cc = x / ConfigConstants.CHUNK_SIZE;
+        int lx = x % ConfigConstants.CHUNK_SIZE, ly = y % ConfigConstants.CHUNK_SIZE;
         try (Jedis jedis = pool.getResource()) {
-            jedis.setbit(ConfigConstants.KEY_MAP_BLOCKED, bitmapOffset(x, y), false);
-            jedis.incr(ConfigConstants.KEY_MAP_BLOCKED_VERSION);
+            jedis.setbit(ConfigConstants.mapBlockedChunkKey(cr, cc), chunkOffset(lx, ly), false);
+            jedis.incr(ConfigConstants.mapBlockedChunkVerKey(cr, cc));
+            jedis.sadd(ConfigConstants.KEY_CHUNKS_MODIFIED, "b:" + cr + ":" + cc);
+        }
+        if (chunkBlockedCache != null && cr < chunkBlockedCache.length
+                && cc < chunkBlockedCache[cr].length) {
+            chunkBlockedCache[cr][cc] = null;
         }
     }
 
     /** 获取所有障碍物坐标列表 */
     public List<Point> getAllBlocked() {
         refreshMapConfig();
-        boolean[][] grid = getBitmapAsGrid(ConfigConstants.KEY_MAP_BLOCKED, mapWidth, mapHeight);
+        ensureChunkCache(mapWidth, mapHeight);
         List<Point> list = new ArrayList<>();
-        for (int y = 0; y < mapHeight; y++) {
-            for (int x = 0; x < mapWidth; x++) {
-                if (grid[y][x]) {
-                    list.add(new Point(x, y));
+        for (int cr = 0; cr < totalChunkRows; cr++) {
+            for (int cc = 0; cc < totalChunkCols; cc++) {
+                boolean[][] chunk = getOrFetchBlockedChunk(cr, cc);
+                int baseY = cr * ConfigConstants.CHUNK_SIZE;
+                int baseX = cc * ConfigConstants.CHUNK_SIZE;
+                for (int ly = 0; ly < chunk.length; ly++) {
+                    boolean[] row = chunk[ly];
+                    for (int lx = 0; lx < row.length; lx++) {
+                        if (row[lx]) {
+                            int gx = baseX + lx;
+                            int gy = baseY + ly;
+                            if (gx < mapWidth && gy < mapHeight) {
+                                list.add(new Point(gx, gy));
+                            }
+                        }
+                    }
                 }
             }
         }
         return list;
     }
 
-    /** 获取地图阻挡状态二维数组（供 Navigator 路径规划使用），带缓存 */
+    /** 获取地图阻挡状态二维数组（供 Navigator 路径规划使用），chunk 聚合 + 二次 Pipeline */
     public boolean[][] getMapBlocked() {
         refreshMapConfig();
-        long currentVersion = getBitmapVersion(ConfigConstants.KEY_MAP_BLOCKED_VERSION);
-        if (cachedMapBlockedBytes != null && currentVersion == cachedMapBlockedVersion) {
-            return decodeCachedBitmap(cachedMapBlockedBytes, mapWidth, mapHeight);
+        ensureChunkCache(mapWidth, mapHeight);
+
+        // Pass 1: Pipeline 批量读取所有 chunk 版本号
+        long[][] currentVersions = new long[totalChunkRows][totalChunkCols];
+        try (Jedis jedis = pool.getResource()) {
+            var pipeline = jedis.pipelined();
+            var responses = new java.util.ArrayList<java.util.List<redis.clients.jedis.Response<String>>>();
+            for (int cr = 0; cr < totalChunkRows; cr++) {
+                var row = new java.util.ArrayList<redis.clients.jedis.Response<String>>();
+                for (int cc = 0; cc < totalChunkCols; cc++) {
+                    row.add(pipeline.get(ConfigConstants.mapBlockedChunkVerKey(cr, cc)));
+                }
+                responses.add(row);
+            }
+            pipeline.sync();
+            for (int cr = 0; cr < totalChunkRows; cr++) {
+                for (int cc = 0; cc < totalChunkCols; cc++) {
+                    String val = responses.get(cr).get(cc).get();
+                    currentVersions[cr][cc] = val != null ? Long.parseLong(val) : 0;
+                }
+            }
         }
-        byte[] data = getBitmapBytes(ConfigConstants.KEY_MAP_BLOCKED);
-        cachedMapBlockedBytes = data;
-        cachedMapBlockedVersion = currentVersion;
-        return decodeCachedBitmap(data, mapWidth, mapHeight);
+
+        // Pass 2: 仅版本号变化的 chunk 批量 GET bitmap
+        java.util.List<ChunkId> stale = new java.util.ArrayList<>();
+        for (int cr = 0; cr < totalChunkRows; cr++) {
+            for (int cc = 0; cc < totalChunkCols; cc++) {
+                if (chunkBlockedCache[cr][cc] == null
+                        || chunkBlockedVersions[cr][cc] != currentVersions[cr][cc]) {
+                    stale.add(new ChunkId("b", cr, cc));
+                }
+            }
+        }
+        if (!stale.isEmpty()) {
+            try (Jedis jedis = pool.getResource()) {
+                var pipeline = jedis.pipelined();
+                java.util.Map<ChunkId, redis.clients.jedis.Response<byte[]>> fresp = new java.util.LinkedHashMap<>();
+                for (ChunkId ck : stale) {
+                    fresp.put(ck, pipeline.get(ck.toKey().getBytes()));
+                }
+                pipeline.sync();
+                for (ChunkId ck : stale) {
+                    byte[] raw = fresp.get(ck).get();
+                    chunkBlockedCache[ck.row][ck.col] = decodeCachedChunk(raw);
+                    chunkBlockedVersions[ck.row][ck.col] = currentVersions[ck.row][ck.col];
+                }
+            }
+        }
+
+        // Pass 3: 内存拼接
+        boolean[][] grid = new boolean[mapHeight][mapWidth];
+        for (int y = 0; y < mapHeight; y++) {
+            int cr = y / ConfigConstants.CHUNK_SIZE;
+            int ly = y % ConfigConstants.CHUNK_SIZE;
+            boolean[][] rowChunk = chunkBlockedCache[cr][0];
+            boolean[] row = rowChunk[ly];
+            int cc = 0;
+            for (int x = 0; x < mapWidth; x++) {
+                int ncc = x / ConfigConstants.CHUNK_SIZE;
+                if (ncc != cc) {
+                    cc = ncc;
+                    rowChunk = chunkBlockedCache[cr][cc];
+                    row = rowChunk[ly];
+                }
+                grid[y][x] = row[x % ConfigConstants.CHUNK_SIZE];
+            }
+        }
+        return grid;
     }
 
     // ==================== 小车状态 ====================
@@ -466,11 +809,24 @@ public class BlackboardClient {
 
     /** 获取探索数量 */
     public int getExploredCount() {
-        int count = 0;
+        refreshMapConfig();
+        int rows = (mapHeight + ConfigConstants.CHUNK_SIZE - 1) / ConfigConstants.CHUNK_SIZE;
+        int cols = (mapWidth  + ConfigConstants.CHUNK_SIZE - 1) / ConfigConstants.CHUNK_SIZE;
         try (Jedis jedis = pool.getResource()) {
-            count = (int) jedis.bitcount(ConfigConstants.KEY_MAP_VIEW);
+            var pipeline = jedis.pipelined();
+            java.util.List<redis.clients.jedis.Response<Long>> responses = new java.util.ArrayList<>();
+            for (int cr = 0; cr < rows; cr++) {
+                for (int cc = 0; cc < cols; cc++) {
+                    responses.add(pipeline.bitcount(ConfigConstants.mapViewChunkKey(cr, cc)));
+                }
+            }
+            pipeline.sync();
+            int count = 0;
+            for (var resp : responses) {
+                count += resp.get();
+            }
+            return count;
         }
-        return count;
     }
 
     /** 获取探索百分比 (0.0 ~ 100.0)，排除障碍物 */
@@ -540,7 +896,17 @@ public class BlackboardClient {
             // 清理当前位置的动态障碍物标记
             Point pos = getCarPosition(carId);
             if (pos != null) {
-                jedis.setbit(ConfigConstants.KEY_MAP_BLOCKED, (long) pos.y * getMapWidth() + pos.x, false);
+                jedis.setbit(ConfigConstants.mapBlockedChunkKey(
+                        pos.y / ConfigConstants.CHUNK_SIZE,
+                        pos.x / ConfigConstants.CHUNK_SIZE),
+                        chunkOffset(pos.x % ConfigConstants.CHUNK_SIZE,
+                                pos.y % ConfigConstants.CHUNK_SIZE), false);
+                jedis.incr(ConfigConstants.mapBlockedChunkVerKey(
+                        pos.y / ConfigConstants.CHUNK_SIZE,
+                        pos.x / ConfigConstants.CHUNK_SIZE));
+                jedis.sadd(ConfigConstants.KEY_CHUNKS_MODIFIED, "b:"
+                        + pos.y / ConfigConstants.CHUNK_SIZE + ":"
+                        + pos.x / ConfigConstants.CHUNK_SIZE);
             }
             // 删除所有 car:{id}:* 键
             jedis.del(ConfigConstants.carStatusKey(carId));
@@ -572,8 +938,23 @@ public class BlackboardClient {
 
     /** 获取障碍物数量 */
     public int getObstacleCount() {
+        refreshMapConfig();
+        int rows = (mapHeight + ConfigConstants.CHUNK_SIZE - 1) / ConfigConstants.CHUNK_SIZE;
+        int cols = (mapWidth  + ConfigConstants.CHUNK_SIZE - 1) / ConfigConstants.CHUNK_SIZE;
         try (Jedis jedis = pool.getResource()) {
-            return (int) jedis.bitcount(ConfigConstants.KEY_MAP_BLOCKED);
+            var pipeline = jedis.pipelined();
+            java.util.List<redis.clients.jedis.Response<Long>> responses = new java.util.ArrayList<>();
+            for (int cr = 0; cr < rows; cr++) {
+                for (int cc = 0; cc < cols; cc++) {
+                    responses.add(pipeline.bitcount(ConfigConstants.mapBlockedChunkKey(cr, cc)));
+                }
+            }
+            pipeline.sync();
+            int count = 0;
+            for (var resp : responses) {
+                count += resp.get();
+            }
+            return count;
         }
     }
 
@@ -733,6 +1114,7 @@ public class BlackboardClient {
             cachedMapViewVersion = -1;
             cachedMapBlockedBytes = null;
             cachedMapBlockedVersion = -1;
+            invalidateAllChunkCache();
             log.info("Redis 数据库已清空 (FLUSHDB)");
         }
     }
@@ -789,5 +1171,38 @@ public class BlackboardClient {
         if (pool != null && !pool.isClosed()) {
             pool.close();
         }
+    }
+
+    // ==================== 地图分块 ====================
+
+    public static class ChunkId {
+        public final String type;   // "v" | "b"
+        public final int row, col;
+
+        public ChunkId(String type, int row, int col) {
+            this.type = type;
+            this.row = row;
+            this.col = col;
+        }
+
+        public String toKey() {
+            if ("v".equals(type)) return ConfigConstants.mapViewChunkKey(row, col);
+            return ConfigConstants.mapBlockedChunkKey(row, col);
+        }
+
+        public String toVerKey() {
+            if ("v".equals(type)) return ConfigConstants.mapViewChunkVerKey(row, col);
+            return ConfigConstants.mapBlockedChunkVerKey(row, col);
+        }
+
+        public String toModifiedMember() {
+            return type + ":" + row + ":" + col;
+        }
+    }
+
+    public static class MapChunk {
+        public int chunkRow, chunkCol;
+        public boolean[][] data;
+        public long version;
     }
 }

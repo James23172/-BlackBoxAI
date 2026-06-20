@@ -47,9 +47,16 @@ public class StateBroadcaster {
     }
 
     /** 向单个 WebSocket 客户端发送当前状态快照（新连接时调用） */
+    private volatile long currentTick = 0;
+    private volatile long lastFullMapTick = -1;  // 首帧前 -1，确保首帧全量
+
+    private boolean shouldSendFullMap() {
+        return lastFullMapTick < 0 || (currentTick - lastFullMapTick >= 50);
+    }
+
     public void sendCurrentState(WebSocket conn) {
         try {
-            String json = JSON.toJSONString(buildState());
+            String json = JSON.toJSONString(buildState(true));
             conn.send(json);
             LOG.debug("已发送当前状态到新客户端: {}", conn.getRemoteSocketAddress());
         } catch (Exception e) {
@@ -58,13 +65,14 @@ public class StateBroadcaster {
     }
 
     private SimulationState buildState() {
+        return buildState(false);
+    }
+
+    private SimulationState buildState(boolean forceFull) {
         int mapWidth = blackboard.getMapWidth();
         int mapHeight = blackboard.getMapHeight();
-        boolean[][] mapView = blackboard.getMapView();
-        List<Point> obstacles = blackboard.getAllBlocked();
 
         List<CarState> carStates = new ArrayList<>();
-        // 动态获取所有已注册的小车 ID（支持运行时增减）
         List<String> carIds = blackboard.getAllCarIds();
         for (String carId : carIds) {
             CarState cs = new CarState(carId);
@@ -85,21 +93,36 @@ public class StateBroadcaster {
                 : 0.0;
 
         SimulationState state = new SimulationState();
-        state.setMapView(mapView);
         state.setMapWidth(mapWidth);
         state.setMapHeight(mapHeight);
-        state.setObstacles(obstacles);
+        state.setObstacles(blackboard.getAllBlocked());  // obstacles 每帧都发送
         state.setCars(carStates);
         state.setExploredRate(exploredRate);
         state.setTaskActive(blackboard.isTaskActive());
-        state.setTick(0);
+        state.setTick(currentTick);
         state.setGlobalPaused(blackboard.isGlobalPaused());
         state.setCompleted(exploredRate >= 0.999);
+
+        if (forceFull || shouldSendFullMap()) {
+            state.setMapView(blackboard.getMapView());
+            state.fullMap = true;
+            lastFullMapTick = currentTick;
+        } else {
+            java.util.List<inspection.common.client.BlackboardClient.MapChunk> changed = new java.util.ArrayList<>();
+            for (inspection.common.client.BlackboardClient.ChunkId ck : blackboard.popModifiedChunks()) {
+                if ("v".equals(ck.type)) {
+                    changed.add(blackboard.getViewChunkData(ck.row, ck.col));
+                }
+            }
+            state.changedChunks = changed;
+            state.fullMap = false;
+        }
         return state;
     }
 
     private void broadcastState() {
         String json = JSON.toJSONString(buildState());
         wsServer.broadcast(json);
+        currentTick++;
     }
 }

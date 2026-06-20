@@ -7,13 +7,20 @@ import redis.clients.jedis.Jedis;
 import redis.clients.jedis.JedisPool;
 
 import javax.crypto.Cipher;
+import javax.crypto.spec.GCMParameterSpec;
 import javax.crypto.spec.SecretKeySpec;
 import java.nio.charset.StandardCharsets;
+import java.security.SecureRandom;
 import java.util.*;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 public class PermissionManager {
+    private static final Logger log = LoggerFactory.getLogger(PermissionManager.class);
     private static final String PERM_KEY = "auth:permissions";
-    private static final byte[] AES_KEY = "BlackBoxAI!2024!!".getBytes(StandardCharsets.UTF_8); // 16 bytes
+    private static final byte[] AES_KEY = System.getProperty(
+        "auth.aes.key", "BlackBoxAI!2024!!").getBytes(StandardCharsets.UTF_8);
     private final JedisPool pool;
 
     // 默认权限矩阵
@@ -36,7 +43,7 @@ public class PermissionManager {
             String json = JSON.toJSONString(perms);
             byte[] encrypted = aesEncrypt(json);
             jedis.set(PERM_KEY.getBytes(StandardCharsets.UTF_8), encrypted);
-        } catch (Exception e) { /* ignore */ }
+        } catch (Exception e) { log.error("保存权限配置失败", e); }
     }
 
     @SuppressWarnings("unchecked")
@@ -50,14 +57,24 @@ public class PermissionManager {
     }
 
     private byte[] aesEncrypt(String plain) throws Exception {
-        Cipher c = Cipher.getInstance("AES/ECB/PKCS5Padding");
-        c.init(Cipher.ENCRYPT_MODE, new SecretKeySpec(AES_KEY, "AES"));
-        return c.doFinal(plain.getBytes(StandardCharsets.UTF_8));
+        Cipher c = Cipher.getInstance("AES/GCM/NoPadding");
+        byte[] iv = new byte[12];
+        new SecureRandom().nextBytes(iv);
+        GCMParameterSpec spec = new GCMParameterSpec(128, iv);
+        c.init(Cipher.ENCRYPT_MODE, new SecretKeySpec(AES_KEY, "AES"), spec);
+        byte[] ct = c.doFinal(plain.getBytes(StandardCharsets.UTF_8));
+        byte[] result = new byte[iv.length + ct.length];
+        System.arraycopy(iv, 0, result, 0, iv.length);
+        System.arraycopy(ct, 0, result, iv.length, ct.length);
+        return result;
     }
 
     private String aesDecrypt(byte[] encrypted) throws Exception {
-        Cipher c = Cipher.getInstance("AES/ECB/PKCS5Padding");
-        c.init(Cipher.DECRYPT_MODE, new SecretKeySpec(AES_KEY, "AES"));
-        return new String(c.doFinal(encrypted), StandardCharsets.UTF_8);
+        byte[] iv = java.util.Arrays.copyOfRange(encrypted, 0, 12);
+        byte[] ct = java.util.Arrays.copyOfRange(encrypted, 12, encrypted.length);
+        Cipher c = Cipher.getInstance("AES/GCM/NoPadding");
+        GCMParameterSpec spec = new GCMParameterSpec(128, iv);
+        c.init(Cipher.DECRYPT_MODE, new SecretKeySpec(AES_KEY, "AES"), spec);
+        return new String(c.doFinal(ct), StandardCharsets.UTF_8);
     }
 }

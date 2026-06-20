@@ -145,11 +145,11 @@ public class TargetPlannerMain {
         blackboard.invalidateBitmapCache();
         boolean[][] explored = blackboard.getMapView();
 
-        // 1. 扫描所有未探索的格子 → 候选池
+        // 1. 扫描所有未探索的格子 → 候选池（排除障碍物）
         List<Point> candidates = new ArrayList<>();
         for (int y = 0; y < h; y++)
             for (int x = 0; x < w; x++)
-                if (!explored[y][x])
+                if (!explored[y][x] && !blackboard.isBlocked(x, y))
                     candidates.add(new Point(x, y));
 
         if (candidates.isEmpty()) return null;
