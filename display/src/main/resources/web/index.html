@@ -246,8 +246,8 @@ function isLoggedIn() {
     } catch(e) { return !!t; }
 }
 
-function routeGuard() {
-    loadConfig();  // 获取 authServer 地址
+async function routeGuard() {
+    await loadConfig();  // 确保先拿到 authServer 地址再渲染登录页
     var hash = location.hash || '#login';
     if (hash === '#login') { showLogin(); return; }
     if (!isLoggedIn()) { showLogin('会话已过期，请重新登录'); return; }
@@ -295,7 +295,7 @@ async function doLogin() {
             document.getElementById('loginUser').focus();
         }
     } catch(e) {
-        errEl.textContent = '认证服务未启动 (localhost:8890)';
+        errEl.textContent = '认证服务未启动 (' + authServer + ')';
     } finally {
         btn.disabled = false; btn.textContent = '登 录';
     }

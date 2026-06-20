@@ -32,6 +32,8 @@ public class DisplayMain {
         int redisPort = argsParser.getInt("--redis-port", ConfigConstants.REDIS_PORT);
         String mqHost = argsParser.get("--mq-host", ConfigConstants.RABBITMQ_HOST);
         int mqPort = argsParser.getInt("--mq-port", ConfigConstants.RABBITMQ_PORT);
+        String rabbitUser = argsParser.get("--mq-user", ConfigConstants.RABBITMQ_USER);
+        String rabbitPass = argsParser.get("--mq-pass", ConfigConstants.RABBITMQ_PASS);
         int wsPort = argsParser.getInt("--ws-port", 8887);
         int httpPort = argsParser.getInt("--http-port", 8888);
         int carCount = argsParser.getInt("--car-count", 4);
@@ -54,7 +56,7 @@ public class DisplayMain {
         // 初始化基础客户端
         BlackboardClient bb = new BlackboardClient(redisHost, redisPort);
         MessageBusClient mq = new MessageBusClient(mqHost, mqPort,
-                ConfigConstants.RABBITMQ_USER, ConfigConstants.RABBITMQ_PASS,
+                rabbitUser, rabbitPass,
                 ConfigConstants.RABBITMQ_VHOST);
 
         // 启动 WebSocket 服务器

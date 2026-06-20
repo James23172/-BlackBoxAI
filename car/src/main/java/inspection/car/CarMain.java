@@ -16,6 +16,7 @@ public class CarMain {
         String carId = ConfigConstants.CAR_ID;
         String redisHost = ConfigConstants.REDIS_HOST; int redisPort = ConfigConstants.REDIS_PORT;
         String rabbitHost = ConfigConstants.RABBITMQ_HOST; int rabbitPort = ConfigConstants.RABBITMQ_PORT;
+        String rabbitUser = ConfigConstants.RABBITMQ_USER; String rabbitPass = ConfigConstants.RABBITMQ_PASS;
         for (int i = 0; i < args.length; i++) {
             switch (args[i]) {
                 case "--car-id": carId = args[++i]; break;
@@ -23,6 +24,8 @@ public class CarMain {
                 case "--redis-port": redisPort = Integer.parseInt(args[++i]); break;
                 case "--mq-host": rabbitHost = args[++i]; break;
                 case "--mq-port": rabbitPort = Integer.parseInt(args[++i]); break;
+                case "--mq-user": rabbitUser = args[++i]; break;
+                case "--mq-pass": rabbitPass = args[++i]; break;
             }
         }
         if (carId == null || carId.isEmpty()) carId = ConfigConstants.CAR_ID;
@@ -31,7 +34,7 @@ public class CarMain {
 
         final BlackboardClient bb = new BlackboardClient(redisHost, redisPort);
         final MessageBusClient mq = new MessageBusClient(rabbitHost, rabbitPort,
-                ConfigConstants.RABBITMQ_USER, ConfigConstants.RABBITMQ_PASS, ConfigConstants.RABBITMQ_VHOST);
+                rabbitUser, rabbitPass, ConfigConstants.RABBITMQ_VHOST);
 
         final CarAgent agent = new CarAgent(finalCarId, bb, mq);
 

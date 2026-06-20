@@ -73,7 +73,14 @@
       "Bash(\"c:/work_software/Redis/redis-cli.exe\" GET auth:migrated)",
       "Bash(echo \"=== auth:user:admin \\(JSON\\) ===\")",
       "Bash(\"c:/work_software/Redis/redis-cli.exe\" GET auth:user:admin)",
-      "Bash(echo \"=== 完整登录测试（模拟浏览器的完整流程）===\")"
+      "Bash(echo \"=== 完整登录测试（模拟浏览器的完整流程）===\")",
+      "Bash(rabbitmqctl status *)",
+      "Bash(findstr \":5672\")",
+      "Bash(Get-Service -Name \"*RabbitMQ*\" -ErrorAction SilentlyContinue)",
+      "Bash(Format-List Name, Status)",
+      "Bash(Get-ChildItem \"C:\\\\Program Files\\\\RabbitMQ*\" -Directory -ErrorAction SilentlyContinue)",
+      "Bash(Select-Object FullName)",
+      "Bash(ping *)"
     ]
   }
 }
