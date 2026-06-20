@@ -56,18 +56,18 @@ public class AuthServerMain {
 
         // 仅在首次迁移时清除旧格式哈希（避免每次重启重置 admin 密码）
         try (Jedis jedis = pool.getResource()) {
-            if (!jedis.exists("auth:migrated")) {
+            if (jedis.setnx("auth:migrated", "1") == 1) {
                 jedis.del("auth:user:admin");
-                jedis.set("auth:migrated", "1");
             }
         } catch (Exception ignored) {}
 
         // 确保默认管理员存在（阻塞重试直到成功，防止 AuthServer 先于 Redis 启动）
+        String adminPassword = System.getProperty("auth.admin.password", "admin123");
         while (true) {
             try {
                 if (users.getUser("admin") == null) {
-                    users.register("admin", "admin123", Role.CONFIGURATOR);
-                    log.info("已创建默认管理员: admin/admin123");
+                    users.register("admin", adminPassword, Role.CONFIGURATOR);
+                    log.info("已创建默认管理员: admin");
                 }
                 break;
             } catch (Exception e) {
