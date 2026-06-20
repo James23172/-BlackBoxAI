@@ -38,7 +38,8 @@ public class DisplayMain {
         int httpPort = argsParser.getInt("--http-port", 8888);
         int carCount = argsParser.getInt("--car-count", 4);
         String machineId = argsParser.get("--machine", "主");
-        String authHost = argsParser.get("--auth-host", "localhost");
+        String authHost = argsParser.get("--auth-host", null);
+        if (authHost == null) authHost = redisHost;  // 默认跟随 Redis 主机（分布式场景下 Auth + Redis 同机部署）
         int authPort = argsParser.getInt("--auth-port", 8890);
 
         // --port 兼容旧调用方式：同时设置 ws 和 http 端口
