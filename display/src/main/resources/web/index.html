@@ -189,6 +189,7 @@ var targetPositions = {};
 // ====================================================================
 var authServer = 'http://localhost:8890';  // 默认值，可由 /api/config 覆盖
 var MACHINE_ID = '主';                      // 默认值
+var WS_PORT = 8887;                         // 默认值，可由 /api/config 覆盖
 
 async function loadConfig() {
     try {
@@ -196,6 +197,7 @@ async function loadConfig() {
         var cfg = await r.json();
         if (cfg.authServer) authServer = cfg.authServer;
         if (cfg.machine) MACHINE_ID = cfg.machine;
+        if (cfg.wsPort)   WS_PORT = cfg.wsPort;
         if (cfg.version) checkVersion(cfg.version);
     } catch(e) { /* 保持默认值 localhost */ }
 }
@@ -472,7 +474,7 @@ function attachCanvasListeners(role) {
 function connectWebSocket() {
     if (ws && ws.readyState === WebSocket.OPEN) return;
     var proto = location.protocol === 'https:' ? 'wss' : 'ws';
-    ws = new WebSocket(proto + '://' + location.hostname + ':8887');
+    ws = new WebSocket(proto + '://' + location.hostname + ':' + WS_PORT);
     ws.onopen = function(){
         var el = document.getElementById('connStatus');
         el.textContent = '已连接'; el.className = 'badge badge-ok';

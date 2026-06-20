@@ -371,6 +371,11 @@ public class CommandReceiver extends WebSocketServer {
             state.role = verifyResp.getString("role");
             state.machineId = machineId;
 
+            // 推送当前状态给新连接（避免白屏等待下一次 REFRESH_ALL）
+            if (stateBroadcaster != null) {
+                stateBroadcaster.sendCurrentState(conn);
+            }
+
             // 回复 AUTH_OK，告知前端 machine
             com.alibaba.fastjson2.JSONObject ok = new com.alibaba.fastjson2.JSONObject();
             ok.put("type", "AUTH_OK");
