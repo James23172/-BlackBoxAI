@@ -63,6 +63,9 @@ public class BlackboardClient {
         config.setMaxIdle(5);
         config.setMinIdle(1);
         config.setTestOnBorrow(true);
+        config.setTestWhileIdle(true);
+        config.setTimeBetweenEvictionRuns(Duration.ofSeconds(30));
+        config.setMinEvictableIdleDuration(Duration.ofSeconds(60));
         this.pool = new JedisPool(config, host, port,
                 ConfigConstants.REDIS_TIMEOUT_MS, null);
         this.mapWidth = mapWidth;
