@@ -76,24 +76,28 @@ public class DisplayMain {
         String contentVersion = computeContentVersion();
         LOG.info("前端内容版本: {}", contentVersion);
         httpServer.createContext("/", new StaticFileHandler());
-        httpServer.createContext("/api/config", new ConfigHandler(machineId, authHost, authPort, contentVersion));
+        httpServer.createContext("/api/config", new ConfigHandler(machineId, authHost, authPort, wsPort, contentVersion));
         httpServer.setExecutor(null);
         httpServer.start();
         LOG.info("HTTP 服务器已启动，端口: {}，访问 http://localhost:{}/index.html", httpPort, httpPort);
 
         LOG.info("Display 模块启动完成");
 
-        // 自动初始化：向 TaskConfigurator 发送默认配置，预加载地图与小车
-        JSONObject initData = new JSONObject();
-        initData.put("mapWidth", ConfigConstants.DEFAULT_MAP_WIDTH);
-        initData.put("mapHeight", ConfigConstants.DEFAULT_MAP_HEIGHT);
-        initData.put("carCount", carCount);
-        initData.put("obstacleDensity", ConfigConstants.DEFAULT_OBSTACLE_DENSITY);
-        initData.put("active", false);  // 不激活，等用户点 Start
-        MQMessage initMsg = new MQMessage("FORWARD_CONFIG", initData);
-        mq.sendToQueue(ConfigConstants.QUEUE_TASK_CONFIG_CMD, initMsg);
-        LOG.info("已发送自动初始化配置: {}x{}, carCount={} (active=false，等待用户 Start)",
-                ConfigConstants.DEFAULT_MAP_WIDTH, ConfigConstants.DEFAULT_MAP_HEIGHT, carCount);
+        // 自动初始化：仅在 map 不存在时发送（避免多 Display 实例重复触发）
+        if (bb.getMapWidth() == 0) {
+            JSONObject initData = new JSONObject();
+            initData.put("mapWidth", ConfigConstants.DEFAULT_MAP_WIDTH);
+            initData.put("mapHeight", ConfigConstants.DEFAULT_MAP_HEIGHT);
+            initData.put("carCount", carCount);
+            initData.put("obstacleDensity", ConfigConstants.DEFAULT_OBSTACLE_DENSITY);
+            initData.put("active", false);  // 不激活，等用户点 Start
+            MQMessage initMsg = new MQMessage("FORWARD_CONFIG", initData);
+            mq.sendToQueue(ConfigConstants.QUEUE_TASK_CONFIG_CMD, initMsg);
+            LOG.info("已发送自动初始化配置: {}x{}, carCount={} (active=false，等待用户 Start)",
+                    ConfigConstants.DEFAULT_MAP_WIDTH, ConfigConstants.DEFAULT_MAP_HEIGHT, carCount);
+        } else {
+            LOG.info("地图已存在 ({}x{})，跳过自动初始化", bb.getMapWidth(), bb.getMapHeight());
+        }
 
         // 添加关闭钩子
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
@@ -190,12 +194,14 @@ public class DisplayMain {
         private final String machineId;
         private final String authHost;
         private final int authPort;
+        private final int wsPort;
         private final String contentVersion;
 
-        ConfigHandler(String machineId, String authHost, int authPort, String contentVersion) {
+        ConfigHandler(String machineId, String authHost, int authPort, int wsPort, String contentVersion) {
             this.machineId = machineId;
             this.authHost = authHost;
             this.authPort = authPort;
+            this.wsPort = wsPort;
             this.contentVersion = contentVersion;
         }
 
@@ -204,6 +210,7 @@ public class DisplayMain {
             JSONObject cfg = new JSONObject();
             cfg.put("machine", machineId);
             cfg.put("authServer", "http://" + authHost + ":" + authPort);
+            cfg.put("wsPort", wsPort);
             cfg.put("version", contentVersion);
             byte[] bytes = cfg.toJSONString().getBytes(StandardCharsets.UTF_8);
             exchange.getResponseHeaders().set("Content-Type", "application/json; charset=utf-8");
