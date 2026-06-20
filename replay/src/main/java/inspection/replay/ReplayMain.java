@@ -35,6 +35,9 @@ public class ReplayMain {
         int redisPort = argsParser.getInt("--redis-port", ConfigConstants.REDIS_PORT);
         int httpPort = argsParser.getInt("--port", 8893);
 
+        // 自动清理残留的旧 ReplayServer 进程，避免 BindException
+        killPortOwner(httpPort);
+
         var pool = new redis.clients.jedis.JedisPool(redisHost, redisPort);
         jedis = pool.getResource();
 
@@ -46,6 +49,30 @@ public class ReplayMain {
         server.setExecutor(null);
         server.start();
         log.info("ReplayServer 已启动，端口: {}", httpPort);
+    }
+
+    /**
+     * 杀掉占用指定端口的 LISTENING 进程，避免重启时 BindException。
+     * Windows 专用（依赖 netstat + taskkill）。
+     */
+    private static void killPortOwner(int port) {
+        try {
+            Process p = new ProcessBuilder("cmd", "/c",
+                    "netstat -ano | findstr :" + port + " | findstr LISTENING").start();
+            String out = new String(p.getInputStream().readAllBytes());
+            for (String line : out.split("\\r?\\n")) {
+                line = line.trim();
+                if (line.isEmpty()) continue;
+                String[] parts = line.split("\\s+");
+                String pid = parts[parts.length - 1];
+                if (pid.matches("\\d+")) {
+                    log.info("清理端口 {} 残留进程 PID={}", port, pid);
+                    Runtime.getRuntime().exec("taskkill /F /PID " + pid).waitFor();
+                    Thread.sleep(500);
+                    break;
+                }
+            }
+        } catch (Exception ignored) {}
     }
 
     static class ListHandler implements HttpHandler {

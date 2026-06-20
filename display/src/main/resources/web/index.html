@@ -3,6 +3,9 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
     <title>多机器人协同巡检仿真系统</title>
     <style>
         :root {
@@ -97,6 +100,7 @@
         .reg-row{display:flex;gap:8px;margin-bottom:8px}
         .reg-row input{flex:1;padding:7px 10px;border:1px solid var(--border);border-radius:6px;background:var(--bg-input);color:var(--text);font-size:12px;outline:none}
         .reg-row select{padding:7px 10px;border:1px solid var(--border);border-radius:6px;background:var(--bg-input);color:var(--text);font-size:12px}
+        .reg-row label{font-size:12px;color:var(--text2);white-space:nowrap;line-height:32px}
         .reg-msg{font-size:11px;min-height:16px;margin-top:4px}
     </style>
 </head>
@@ -188,11 +192,46 @@ var MACHINE_ID = '主';                      // 默认值
 
 async function loadConfig() {
     try {
-        var r = await fetch('/api/config');
+        var r = await fetch('/api/config?_=' + Date.now());
         var cfg = await r.json();
         if (cfg.authServer) authServer = cfg.authServer;
         if (cfg.machine) MACHINE_ID = cfg.machine;
+        if (cfg.version) checkVersion(cfg.version);
     } catch(e) { /* 保持默认值 localhost */ }
+}
+
+/**
+ * 前端版本自愈：比对服务端下发的 index.html 内容哈希。
+ * 版本不一致 → 自动带 cache-busting 参数刷新页面（最多 3 次防止死循环）。
+ */
+function checkVersion(serverVersion) {
+    var stored = localStorage.getItem('appVersion');
+
+    // 首次访问：记录版本并正常继续
+    if (!stored) {
+        localStorage.setItem('appVersion', serverVersion);
+        return;
+    }
+
+    // 版本匹配
+    if (stored === serverVersion) return;
+
+    // 版本不匹配 → 安全阀检查
+    var count = parseInt(sessionStorage.getItem('vrCount') || '0');
+    if (count >= 3) {
+        console.error('版本自动刷新已达上限，强制接受服务端版本。' +
+            'server=' + serverVersion + ' stored=' + stored);
+        sessionStorage.removeItem('vrCount');
+        localStorage.setItem('appVersion', serverVersion);
+        return;
+    }
+
+    sessionStorage.setItem('vrCount', String(count + 1));
+    localStorage.setItem('appVersion', serverVersion);
+
+    var newUrl = window.location.pathname + '?v=' + serverVersion;
+    if (window.location.hash) newUrl += window.location.hash;
+    window.location.replace(newUrl);
 }
 
 function getToken() { return localStorage.getItem('token'); }
@@ -242,7 +281,7 @@ async function doLogin() {
     try {
         var r = await fetch(authServer + '/api/auth/login', {
             method:'POST', headers:{'Content-Type':'application/json'},
-            body: JSON.stringify({username: u, transHash: sha256(p)})
+            body: JSON.stringify({username: u, password: p})
         });
         var j = await r.json();
         if (j.success) {
@@ -314,7 +353,9 @@ function buildPanel(role) {
                 '<div class="completed-badge" id="completedBadge">🎉 巡检完成！</div>'
             ]) +
             section('用户管理',[
-                '<div class="reg-row"><input type="text" id="regUser" placeholder="用户名"><input type="password" id="regPass" placeholder="密码"><select id="regRole"><option value="operator">运行员</option><option value="analyst">分析员</option></select></div>',
+                '<div class="reg-row"><input type="text" id="regUser" placeholder="用户名"></div>',
+                '<div class="reg-row"><input type="password" id="regPass" placeholder="密码"></div>',
+                '<div class="reg-row"><label>角色：</label><select id="regRole"><option value="operator">🔧 运行员</option><option value="analyst">📊 系统分析员</option></select></div>',
                 '<button class="btn btn-full" onclick="doRegister()" style="background:linear-gradient(135deg,#2563eb,#6366f1)">➕ 创建用户</button>',
                 '<div class="reg-msg" id="regMsg"></div>',
                 '<table class="user-table" id="userTable"><tbody><tr><td style="color:var(--text3)">加载中...</td></tr></tbody></table>'
@@ -655,7 +696,7 @@ async function doRegister() {
                 'Content-Type':'application/json',
                 'Authorization':'Bearer '+getToken()
             },
-            body: JSON.stringify({username: u, transHash: sha256(p), role: role})
+            body: JSON.stringify({username: u, password: p, role: role})
         });
         var j = await r.json();
         if (j.success) { m.textContent = '用户 '+u+' 创建成功'; m.style.color = 'var(--green)';

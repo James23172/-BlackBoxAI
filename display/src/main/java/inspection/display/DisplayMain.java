@@ -17,6 +17,7 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 
 /**
  * Display 模块入口
@@ -70,8 +71,10 @@ public class DisplayMain {
 
         // 启动 HTTP 静态文件服务器
         HttpServer httpServer = HttpServer.create(new InetSocketAddress(httpPort), 0);
+        String contentVersion = computeContentVersion();
+        LOG.info("前端内容版本: {}", contentVersion);
         httpServer.createContext("/", new StaticFileHandler());
-        httpServer.createContext("/api/config", new ConfigHandler(machineId, authHost, authPort));
+        httpServer.createContext("/api/config", new ConfigHandler(machineId, authHost, authPort, contentVersion));
         httpServer.setExecutor(null);
         httpServer.start();
         LOG.info("HTTP 服务器已启动，端口: {}，访问 http://localhost:{}/index.html", httpPort, httpPort);
@@ -106,6 +109,25 @@ public class DisplayMain {
 
         // 保持进程存活
         Thread.currentThread().join();
+    }
+
+    /**
+     * 计算前端 index.html 的内容哈希（SHA-256 前 8 位），作为版本标识。
+     * 前端每次加载时比对版本号，不一致则自动刷新绕过浏览器缓存。
+     */
+    private static String computeContentVersion() {
+        try (InputStream is = DisplayMain.class.getClassLoader()
+                .getResourceAsStream("web/index.html")) {
+            if (is == null) return String.valueOf(System.currentTimeMillis());
+            byte[] bytes = is.readAllBytes();
+            MessageDigest md = MessageDigest.getInstance("SHA-256");
+            byte[] hash = md.digest(bytes);
+            StringBuilder sb = new StringBuilder();
+            for (byte b : hash) sb.append(String.format("%02x", b));
+            return sb.toString().substring(0, 8);
+        } catch (Exception e) {
+            return String.valueOf(System.currentTimeMillis());
+        }
     }
 
     /**
@@ -150,6 +172,8 @@ public class DisplayMain {
             exchange.getResponseHeaders().set("Content-Type", contentType);
             // 禁用浏览器缓存，确保前端更新后用户看到最新版本
             exchange.getResponseHeaders().set("Cache-Control", "no-cache, no-store, must-revalidate");
+            exchange.getResponseHeaders().set("Pragma", "no-cache");
+            exchange.getResponseHeaders().set("Expires", "0");
             exchange.sendResponseHeaders(200, bytes.length);
             OutputStream os = exchange.getResponseBody();
             os.write(bytes);
@@ -158,17 +182,19 @@ public class DisplayMain {
     }
 
     /**
-     * /api/config 端点，返回当前 Display 实例的配置信息
+     * /api/config 端点，返回当前 Display 实例的配置信息（含前端版本号）
      */
     static class ConfigHandler implements HttpHandler {
         private final String machineId;
         private final String authHost;
         private final int authPort;
+        private final String contentVersion;
 
-        ConfigHandler(String machineId, String authHost, int authPort) {
+        ConfigHandler(String machineId, String authHost, int authPort, String contentVersion) {
             this.machineId = machineId;
             this.authHost = authHost;
             this.authPort = authPort;
+            this.contentVersion = contentVersion;
         }
 
         @Override
@@ -176,9 +202,13 @@ public class DisplayMain {
             JSONObject cfg = new JSONObject();
             cfg.put("machine", machineId);
             cfg.put("authServer", "http://" + authHost + ":" + authPort);
+            cfg.put("version", contentVersion);
             byte[] bytes = cfg.toJSONString().getBytes(StandardCharsets.UTF_8);
             exchange.getResponseHeaders().set("Content-Type", "application/json; charset=utf-8");
             exchange.getResponseHeaders().set("Access-Control-Allow-Origin", "*");
+            exchange.getResponseHeaders().set("Cache-Control", "no-cache, no-store, must-revalidate");
+            exchange.getResponseHeaders().set("Pragma", "no-cache");
+            exchange.getResponseHeaders().set("Expires", "0");
             exchange.sendResponseHeaders(200, bytes.length);
             try (OutputStream os = exchange.getResponseBody()) {
                 os.write(bytes);

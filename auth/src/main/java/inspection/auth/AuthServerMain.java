@@ -43,6 +43,9 @@ public class AuthServerMain {
     private static PermissionManager perms;
 
     public static void main(String[] args) throws Exception {
+        // 自动清理残留的旧 AuthServer 进程，避免 BindException
+        killPortOwner(8890);
+
         ArgsParser argsParser = new ArgsParser(args);
         String redisHost = argsParser.get("--redis-host", ConfigConstants.REDIS_HOST);
         int redisPort = argsParser.getInt("--redis-port", ConfigConstants.REDIS_PORT);
@@ -59,17 +62,17 @@ public class AuthServerMain {
             }
         } catch (Exception ignored) {}
 
-        // 确保默认管理员存在（带重试，防止AuthServer先于Redis启动）
-        for (int i = 0; i < 5; i++) {
+        // 确保默认管理员存在（阻塞重试直到成功，防止 AuthServer 先于 Redis 启动）
+        while (true) {
             try {
                 if (users.getUser("admin") == null) {
-                    users.register("admin", sha256Hex("admin123"), Role.CONFIGURATOR);
+                    users.register("admin", "admin123", Role.CONFIGURATOR);
                     log.info("已创建默认管理员: admin/admin123");
                 }
                 break;
             } catch (Exception e) {
-                log.warn("初始化 admin 失败 (第{}次): {}", i + 1, e.getMessage());
-                if (i < 4) Thread.sleep(1000);
+                log.warn("初始化 admin 失败: {}，1秒后重试...", e.getMessage());
+                Thread.sleep(1000);
             }
         }
         perms.savePermissions(PermissionManager.DEFAULT_PERMISSIONS);
@@ -108,11 +111,11 @@ public class AuthServerMain {
                 JSONObject body = JSON.parseObject(
                     new String(ex.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
                 String username = body.getString("username");
-                String password = body.getString("transHash");
+                String password = body.getString("password");
                 String roleStr = body.getString("role");
                 Role role = Role.fromString(roleStr);
                 if (username == null || password == null || role == null) {
-                    send(ex, 400, error("参数不完整（需要 username, transHash, role）")); return;
+                    send(ex, 400, error("参数不完整（需要 username, password, role）")); return;
                 }
                 if (username.length() < 2 || password.length() < 3) {
                     send(ex, 400, error("用户名至少2位，密码至少3位")); return;
@@ -140,20 +143,13 @@ public class AuthServerMain {
                 JSONObject body = JSON.parseObject(
                     new String(ex.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
                 String username = body.getString("username");
-                String password = body.getString("transHash");
+                String password = body.getString("password");
                 if (username == null || password == null) {
-                    send(ex, 400, error("请输入用户名和 transHash")); return;
-                }
-
-                // ── 兜底自愈：admin 不存在时现场创建 ──
-                User user = users.getUser(username);
-                if (user == null && "admin".equals(username)) {
-                    users.register("admin", sha256Hex("admin123"), Role.CONFIGURATOR);
-                    log.info("admin 账户已自愈重建");
+                    send(ex, 400, error("请输入用户名和 password")); return;
                 }
 
                 // ── 验证密码 ──
-                user = users.login(username, password);
+                User user = users.login(username, password);
                 if (user == null) {
                     send(ex, 401, error("用户名或密码错误")); return;
                 }
@@ -272,17 +268,33 @@ public class AuthServerMain {
         } catch (Exception e) { throw new RuntimeException(e); }
     }
 
+    /**
+     * 杀掉占用指定端口的 LISTENING 进程，避免重启时 BindException。
+     * Windows 专用（依赖 netstat + taskkill）。
+     */
+    private static void killPortOwner(int port) {
+        try {
+            Process p = new ProcessBuilder("cmd", "/c",
+                    "netstat -ano | findstr :" + port + " | findstr LISTENING").start();
+            String out = new String(p.getInputStream().readAllBytes());
+            for (String line : out.split("\\r?\\n")) {
+                line = line.trim();
+                if (line.isEmpty()) continue;
+                String[] parts = line.split("\\s+");
+                String pid = parts[parts.length - 1];
+                if (pid.matches("\\d+")) {
+                    log.info("清理端口 {} 残留进程 PID={}", port, pid);
+                    Runtime.getRuntime().exec("taskkill /F /PID " + pid).waitFor();
+                    Thread.sleep(500);
+                    break; // 只杀第一个 LISTENING 的
+                }
+            }
+        } catch (Exception ignored) {}
+    }
+
     private static String generateSecret() {
         byte[] b = new byte[32];
         new SecureRandom().nextBytes(b);
         return Base64.getEncoder().encodeToString(b);
-    }
-
-    private static String sha256Hex(String input) throws Exception {
-        java.security.MessageDigest md = java.security.MessageDigest.getInstance("SHA-256");
-        byte[] hash = md.digest(input.getBytes(java.nio.charset.StandardCharsets.UTF_8));
-        StringBuilder sb = new StringBuilder();
-        for (byte b : hash) sb.append(String.format("%02x", b));
-        return sb.toString();
     }
 }

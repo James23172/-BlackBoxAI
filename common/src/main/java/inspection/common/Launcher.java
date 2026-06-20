@@ -75,7 +75,10 @@ public class Launcher {
         }
         System.out.println("✅ 编译完成 (" + (System.currentTimeMillis() - t0) / 1000.0 + "s)");
 
-        // Step 2: 检查基础设施
+        // Step 2: 清理上次残留的端口占用
+        cleanupReservedPorts();
+
+        // Step 3: 检查基础设施
         checkRedisRabbitMQ();
 
         // Step 3: 按顺序启动所有模块进程
@@ -434,6 +437,26 @@ public class Launcher {
     }
 
     // ==================== 基础设施检查 ====================
+
+    /** 清理上次残留的 AuthServer(8890) 和 ReplayServer(8893) 端口占用 */
+    private static void cleanupReservedPorts() {
+        for (int port : new int[]{8890, 8893}) {
+            try {
+                Process p = new ProcessBuilder("cmd", "/c",
+                        "netstat -ano | findstr :" + port).start();
+                String out = new String(p.getInputStream().readAllBytes());
+                for (String line : out.split("\n")) {
+                    if (line.contains("LISTENING")) {
+                        String pid = line.trim().replaceAll(".*\\s+(\\d+)$", "$1");
+                        new ProcessBuilder("taskkill", "/F", "/PID", pid)
+                                .redirectError(ProcessBuilder.Redirect.DISCARD)
+                                .redirectOutput(ProcessBuilder.Redirect.DISCARD)
+                                .start().waitFor();
+                    }
+                }
+            } catch (Exception ignored) {}
+        }
+    }
 
     private static void checkRedisRabbitMQ() {
         boolean redisOk = checkPort("localhost", 6379);
