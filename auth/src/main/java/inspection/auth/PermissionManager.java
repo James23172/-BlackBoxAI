@@ -20,7 +20,7 @@ public class PermissionManager {
     private static final Logger log = LoggerFactory.getLogger(PermissionManager.class);
     private static final String PERM_KEY = "auth:permissions";
     private static final byte[] AES_KEY = System.getProperty(
-        "auth.aes.key", "BlackBoxAI!2024!!").getBytes(StandardCharsets.UTF_8);
+        "auth.aes.key", "BlackBoxAI!2024!").getBytes(StandardCharsets.UTF_8);  // 恰好 16 字节
     private final JedisPool pool;
 
     // 默认权限矩阵

@@ -80,7 +80,9 @@
       "Bash(Format-List Name, Status)",
       "Bash(Get-ChildItem \"C:\\\\Program Files\\\\RabbitMQ*\" -Directory -ErrorAction SilentlyContinue)",
       "Bash(Select-Object FullName)",
-      "Bash(ping *)"
+      "Bash(ping *)",
+      "Bash(java -version)",
+      "Bash(mvn -version)"
     ]
   }
 }

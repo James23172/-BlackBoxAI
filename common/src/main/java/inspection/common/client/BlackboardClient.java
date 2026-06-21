@@ -343,8 +343,10 @@ public class BlackboardClient {
                     fresp.put(ck, pipeline.get(ck.toKey().getBytes()));
                 }
                 pipeline.sync();
+                int chunkBytes = (ConfigConstants.CHUNK_SIZE * ConfigConstants.CHUNK_SIZE + 7) / 8;
                 for (ChunkId ck : stale) {
                     byte[] raw = fresp.get(ck).get();
+                    if (raw == null) raw = new byte[chunkBytes];
                     chunkViewCache[ck.row][ck.col] = decodeCachedChunk(raw);
                     chunkViewVersions[ck.row][ck.col] = currentVersions[ck.row][ck.col];
                 }
@@ -589,8 +591,10 @@ public class BlackboardClient {
                     fresp.put(ck, pipeline.get(ck.toKey().getBytes()));
                 }
                 pipeline.sync();
+                int chunkBytes = (ConfigConstants.CHUNK_SIZE * ConfigConstants.CHUNK_SIZE + 7) / 8;
                 for (ChunkId ck : stale) {
                     byte[] raw = fresp.get(ck).get();
+                    if (raw == null) raw = new byte[chunkBytes];
                     chunkBlockedCache[ck.row][ck.col] = decodeCachedChunk(raw);
                     chunkBlockedVersions[ck.row][ck.col] = currentVersions[ck.row][ck.col];
                 }

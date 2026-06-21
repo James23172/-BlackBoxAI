@@ -575,6 +575,7 @@ function render(state) {
                 for (var lx = 0; lx < chunk.data[ly].length; lx++) {
                     var gx = chunk.chunkCol * _CHUNK_SIZE + lx, gy = chunk.chunkRow * _CHUNK_SIZE + ly;
                     if (gy < rows && gx < cols) {
+                        if (!_lastFullMap[gy]) _lastFullMap[gy] = [];
                         _lastFullMap[gy][gx] = chunk.data[ly][lx];
                         c.fillStyle = obs[gx+','+gy] ? '#5c3d2e' : (chunk.data[ly][lx] ? '#1e4d3a' : '#1a2436');
                         c.fillRect(gx*cellSize, gy*cellSize, cellSize-1, cellSize-1);
