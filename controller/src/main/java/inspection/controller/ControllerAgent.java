@@ -192,7 +192,7 @@ public class ControllerAgent {
                     log.debug("运行员 {} 暂停中，跳过 carId={}", owner, carId);
                     break;
                 }
-                log.info("🚗 [MOVE_READY] 发 MOVE_STEP → Car:{}, carId={}", carId);
+                log.info("🚗 [MOVE_READY] 发 MOVE_STEP → Car:{}", carId);
                 JSONObject moveData = new JSONObject();
                 moveData.put("carId", carId);
                 sendCommand(CommandType.MOVE_STEP, moveData, ConfigConstants.carQueueName(carId));

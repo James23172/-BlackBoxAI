@@ -49,6 +49,8 @@ public class StateBroadcaster {
     /** 向单个 WebSocket 客户端发送当前状态快照（新连接时调用） */
     private volatile long currentTick = 0;
     private volatile long lastFullMapTick = -1;  // 首帧前 -1，确保首帧全量
+    private int lastMapWidth = 0;
+    private int lastMapHeight = 0;
 
     private boolean shouldSendFullMap() {
         return lastFullMapTick < 0 || (currentTick - lastFullMapTick >= 50);
@@ -71,6 +73,12 @@ public class StateBroadcaster {
     private SimulationState buildState(boolean forceFull) {
         int mapWidth = blackboard.getMapWidth();
         int mapHeight = blackboard.getMapHeight();
+
+        boolean dimensionsChanged = (mapWidth != lastMapWidth || mapHeight != lastMapHeight);
+        if (dimensionsChanged) {
+            lastMapWidth = mapWidth;
+            lastMapHeight = mapHeight;
+        }
 
         List<CarState> carStates = new ArrayList<>();
         List<String> carIds = blackboard.getAllCarIds();
@@ -103,7 +111,7 @@ public class StateBroadcaster {
         state.setGlobalPaused(blackboard.isGlobalPaused());
         state.setCompleted(exploredRate >= 0.999);
 
-        if (forceFull || shouldSendFullMap()) {
+        if (forceFull || dimensionsChanged || shouldSendFullMap()) {
             state.setMapView(blackboard.getMapView());
             state.fullMap = true;
             lastFullMapTick = currentTick;

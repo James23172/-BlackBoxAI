@@ -568,8 +568,14 @@ function render(state) {
             }
         _lastFullMap = state.mapView;
     } else if (state.changedChunks) {
-        // 增量：复制当前 canvas 到 offscreen 保留历史，再覆盖 changed chunks
-        c.drawImage(canvas, 0, 0);
+        // 增量：从 _lastFullMap 重绘全部格子（纯内存，无旧车图形残留）
+        for (var y = 0; y < rows; y++)
+            for (var x = 0; x < cols; x++) {
+                c.fillStyle = obs[x+','+y] ? '#5c3d2e'
+                    : (_lastFullMap[y] && _lastFullMap[y][x] ? '#1e4d3a' : '#1a2436');
+                c.fillRect(x*cellSize, y*cellSize, cellSize-1, cellSize-1);
+            }
+        // 叠绘 changed chunks + 更新 _lastFullMap
         state.changedChunks.forEach(function(chunk) {
             for (var ly = 0; ly < chunk.data.length; ly++) {
                 for (var lx = 0; lx < chunk.data[ly].length; lx++) {
