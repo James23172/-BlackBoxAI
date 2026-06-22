@@ -2,7 +2,6 @@ package inspection.car;
 
 import com.alibaba.fastjson2.JSONObject;
 import inspection.common.client.BlackboardClient;
-import inspection.common.client.DistributedLock;
 import inspection.common.client.MessageBusClient;
 import inspection.common.config.ConfigConstants;
 import inspection.common.enums.CarStatus;
@@ -41,18 +40,17 @@ public class CarAgent {
 
         CarStatus status = bb.getCarStatus(carId);
         Point curPos = bb.getCarPosition(carId);
-        log.info("📩 [Car:{}] 收到 MOVE_STEP tick={}, 状态={}, pos=({},{})",
-                carId, tick, status,
-                curPos != null ? curPos.x : -1, curPos != null ? curPos.y : -1);
-
-        DistributedLock lock = bb.getCarLock(carId);
-        if (!lock.tryLock()) {
-            log.warn("[Car:{}] 🔒 获取锁失败，跳过", carId);
+        // 如果 RESET 后位置被清除，等待 TaskConfigurator 重新初始化
+        if (curPos == null) {
+            log.debug("[Car:{}] 位置不存在（可能正在重置），跳过", carId);
             return;
         }
+        log.info("📩 [Car:{}] 收到 MOVE_STEP tick={}, 状态={}, pos=({},{})",
+                carId, tick, status,
+                curPos.x, curPos.y);
 
-        try {
-            Point next = bb.peekNextStep(carId);
+        // 不加分布式锁——Navigator 已移除锁，小车自己不需要锁自己
+        Point next = bb.peekNextStep(carId);
             if (next == null) {
                 log.info("[Car:{}] 📭 peekNextStep=null, 路径走完", carId);
                 handleRouteDone();
@@ -97,9 +95,6 @@ public class CarAgent {
                 handleRouteDone();
                 log.info("[Car:{}] 移动至 ({},{}) 后路径走完", carId, next.x, next.y);
             }
-        } finally {
-            lock.unlock();
-        }
     }
 
     private void handleBlocked() {
