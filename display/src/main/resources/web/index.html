@@ -549,10 +549,6 @@ var _frameTime = 0;
 
 function render(state) {
     if (!state) return;
-    _frameTime = Date.now();
-
-function render(state) {
-    if (!state) return;
     var ctx = document.getElementById('gridCanvas').getContext('2d');
     var rows = state.mapHeight || (state.mapView ? state.mapView.length : 40);
     var cols = state.mapWidth  || (state.mapView && rows > 0 ? state.mapView[0].length : 40);
