@@ -36,7 +36,8 @@ import java.util.concurrent.Executors;
  */
 public class AuthServerMain {
     private static final Logger log = LoggerFactory.getLogger(AuthServerMain.class);
-    private static final String SECRET = generateSecret();
+    private static final String SECRET = System.getProperty(
+        "auth.secret", "BlackBoxAI-InspectionSystem-SecretKey-2024!");
     private static final long TOKEN_TTL_MS = 24 * 60 * 60 * 1000; // 24h
     private static JedisPool pool;
     private static UserManager users;
@@ -65,10 +66,14 @@ public class AuthServerMain {
         String adminPassword = System.getProperty("auth.admin.password", "admin123");
         while (true) {
             try {
-                if (users.getUser("admin") == null) {
-                    users.register("admin", adminPassword, Role.CONFIGURATOR);
-                    log.info("已创建默认管理员: admin");
+                // 先删除旧的（如果存在），然后重新创建
+                try (Jedis jedis = pool.getResource()) {
+                    jedis.del("auth:user:admin");
                 }
+                // 方案一B：后端也要对明文做一次 SHA-256，与前端保持一致
+                String transHash = PasswordHasher.hashForTransport("admin123");
+                users.register("admin", transHash, Role.CONFIGURATOR);
+                log.info("已创建默认管理员: admin/admin123");
                 break;
             } catch (Exception e) {
                 log.warn("初始化 admin 失败: {}，1秒后重试...", e.getMessage());
@@ -290,11 +295,5 @@ public class AuthServerMain {
                 }
             }
         } catch (Exception ignored) {}
-    }
-
-    private static String generateSecret() {
-        byte[] b = new byte[32];
-        new SecureRandom().nextBytes(b);
-        return Base64.getEncoder().encodeToString(b);
     }
 }

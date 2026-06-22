@@ -143,36 +143,13 @@
 // ====================================================================
 //  STATE
 // ====================================================================
-// SHA-256 纯 JS 实现（无外部依赖）
-function sha256(str) {
-    var r = function(n,b){return(n>>>b)|(n<<(32-b))};
-    var C = function(q,n){var b=q>>>16,a=n>>>16;q&=0xffff;n&=0xffff;return ((b*a)<<16)+(q*n);};
-    var S = function(n,b){return(n>>>b)|(n<<(32-b))};
-    var K = [1116352408,1899447441,3049323471,3921009573,961987163,1508970993,2453635748,2870763221,
-             3624381080,310598401,607225278,1426881987,1925078388,2162078206,2614888103,3248222580,
-             3835390401,4022224774,264347078,604807628,770255983,1249150122,1555081692,1996064986,
-             2554220882,2821834349,2952996808,3210313671,3336571891,3584528711,113926993,338241895,
-             666307205,773529912,1294757372,1396182291,1695183700,1986661051,2177026350,2456956037,
-             2730485921,2820302411,3259730800,3345764771,3516065817,3600352804,4094571909,275423344,
-             430227734,506948616,659060556,883997877,958139571,1322822218,1537002063,1747873779,
-             1955562222,2024104815,2227730452,2361852424,2428436474,2756734187,3204031479,3329325298];
-    var H = [1779033703,3144134277,1013904242,2773480762,1359893119,2600822924,528734635,1541459225];
-    var bytes = [];
-    for (var i=0;i<str.length;i++){var c=str.charCodeAt(i);if(c<0x80)bytes.push(c);else if(c<0x800){bytes.push(0xc0|(c>>6),0x80|(c&0x3f));}else if(c<0xd800||c>=0xe000){bytes.push(0xe0|(c>>12),0x80|((c>>6)&0x3f),0x80|(c&0x3f));}else{i++;c=0x10000+(((c&0x3ff)<<10)|(str.charCodeAt(i)&0x3ff));bytes.push(0xf0|(c>>18),0x80|((c>>12)&0x3f),0x80|((c>>6)&0x3f),0x80|(c&0x3f));}}
-    var bitLen = bytes.length*8;
-    bytes.push(0x80);
-    while(bytes.length%64!==56)bytes.push(0);
-    for(var i=0;i<8;i++){bytes.push((bitLen>>>((7-i)*8))&0xff);}
-    for(var chunkStart=0;chunkStart<bytes.length;chunkStart+=64){
-        var w=[];for(var i=0;i<16;i++){w[i]=(bytes[chunkStart+i*4]<<24)|(bytes[chunkStart+i*4+1]<<16)|(bytes[chunkStart+i*4+2]<<8)|bytes[chunkStart+i*4+3];}
-        for(var i=16;i<64;i++){var s0=(S(w[i-15],7)^S(w[i-15],18)^(w[i-15]>>>3)),s1=(S(w[i-2],17)^S(w[i-2],19)^(w[i-2]>>>10));w[i]=w[i-16]+s0+w[i-7]+s1;}
-        var a=H[0],b=H[1],c=H[2],d=H[3],e=H[4],f=H[5],g=H[6],h=H[7];
-        for(var i=0;i<64;i++){var S1=(S(e,6)^S(e,11)^S(e,25)),ch=(e&f)^((~e)&g),t1=h+S1+ch+K[i]+w[i],S0=(S(a,2)^S(a,13)^S(a,22)),maj=(a&b)^(a&c)^(b&c),t2=S0+maj;h=g;g=f;f=e;e=d+t1;d=c;c=b;b=a;a=t1+t2;}
-        H[0]=H[0]+a;H[1]=H[1]+b;H[2]=H[2]+c;H[3]=H[3]+d;H[4]=H[4]+e;H[5]=H[5]+f;H[6]=H[6]+g;H[7]=H[7]+h;
-    }
-    var hex='';
-    for(var i=0;i<8;i++)hex+=((H[i]>>>0).toString(16).padStart(8,'0'));
-    return hex;
+// SHA-256 异步实现（使用浏览器内置 Web Crypto API，标准可靠）
+// ====================================================================
+async function sha256(str) {
+    const msgBuffer = new TextEncoder().encode(str);
+    const hashBuffer = await crypto.subtle.digest('SHA-256', msgBuffer);
+    const hashArray = Array.from(new Uint8Array(hashBuffer));
+    return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
 var ws = null, currentState = null, selectedCarId = null;
@@ -241,11 +218,9 @@ function getRole()  { return localStorage.getItem('role'); }
 function getUsername() { return localStorage.getItem('username'); }
 function isLoggedIn() {
     var t = getToken(); if (!t) return false;
-    try {
-        var payload = JSON.parse(atob(t.split('.')[1] || 'e30='));
-        if (payload.exp && Date.now() > payload.exp) { localStorage.clear(); return false; }
-        return true;
-    } catch(e) { return !!t; }
+    var exp = localStorage.getItem('exp');
+    if (exp && Date.now() > parseInt(exp, 10)) { localStorage.clear(); return false; }
+    return true;
 }
 
 async function routeGuard() {
@@ -276,6 +251,16 @@ function showLogin(msg) {
 async function doLogin() {
     var u = document.getElementById('loginUser').value.trim() || 'admin';
     var p = document.getElementById('loginPass').value || 'admin123';
+    // 方案一B：前端先对密码做 SHA-256（防止明文在网络和浏览器内存中暴露）
+    var transHash = await sha256(p);
+    // ⚠️ 临时调试日志（定位 401 问题）
+    console.log("=== LOGIN DEBUG ===");
+    console.log("Username:", u);
+    console.log("Raw password:", p);
+    console.log("SHA-256 hash:", transHash);
+    console.log("Hash length:", transHash ? transHash.length : 0);
+    console.log("Payload:", JSON.stringify({username: u, password: transHash}));
+    console.log("===================");
     var errEl = document.getElementById('loginError');
     var btn = document.getElementById('loginBtn');
     errEl.textContent = ''; btn.disabled = true; btn.textContent = '登录中...';
@@ -283,13 +268,14 @@ async function doLogin() {
     try {
         var r = await fetch(authServer + '/api/auth/login', {
             method:'POST', headers:{'Content-Type':'application/json'},
-            body: JSON.stringify({username: u, password: p})
+            body: JSON.stringify({username: u, password: transHash})
         });
         var j = await r.json();
         if (j.success) {
             localStorage.setItem('token', j.token);
             localStorage.setItem('role', j.role);
             localStorage.setItem('username', j.username);
+            localStorage.setItem('exp', j.exp);
             location.hash = '#' + j.role;
         } else {
             errEl.textContent = j.error || '用户名或密码错误';
@@ -532,6 +518,7 @@ function selectCarFromTable(id) { selectedCarId = id; render(currentState); }
 // ====================================================================
 //  RENDER (Double-buffered canvas + incremental table)
 // ====================================================================
+var _CHUNK_SIZE = 16;
 var _colCache = {};
 function getColor(cell, x, y, obstacles) {
     var k = x+','+y;
@@ -716,13 +703,14 @@ async function doRegister() {
 
     m.textContent = '创建中...'; m.style.color = 'var(--text3)';
     try {
+        var pwdHash = await sha256(p);
         var r = await fetch(authServer + '/api/auth/register', {
             method:'POST',
             headers:{
-                'Content-Type':'application/json',
+                'Content-Type': 'application/json',
                 'Authorization':'Bearer '+getToken()
             },
-            body: JSON.stringify({username: u, password: p, role: role})
+            body: JSON.stringify({username: u, password: pwdHash, role: role})
         });
         var j = await r.json();
         if (j.success) { m.textContent = '用户 '+u+' 创建成功'; m.style.color = 'var(--green)';

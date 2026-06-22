@@ -95,9 +95,9 @@ public class StateBroadcaster {
 
         int exploredCount = blackboard.getExploredCount();
         int obstacleCount = blackboard.getObstacleCount();
-        int totalExplorable = mapWidth * mapHeight - obstacleCount;
+        int totalExplorable = Math.max(0, mapWidth * mapHeight - obstacleCount);
         double exploredRate = totalExplorable > 0
-                ? (double) exploredCount / totalExplorable
+                ? Math.min(1.0, (double) exploredCount / totalExplorable)
                 : 0.0;
 
         SimulationState state = new SimulationState();

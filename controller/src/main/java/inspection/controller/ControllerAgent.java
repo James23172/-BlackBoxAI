@@ -62,6 +62,9 @@ public class ControllerAgent {
 
     public void start() {
         running = true;
+        // 清除上次运行残留的活跃状态
+        bb.setTaskActive(false);
+        bb.clearTaskQueue();
 
         // 启动事件驱动任务处理线程（BLPOP 阻塞等待 Redis taskQueue）
         taskProcessor = new Thread(this::taskProcessLoop, "controller-task-processor");
@@ -266,6 +269,7 @@ public class ControllerAgent {
         log.info("📋 SET_CONFIG → 转发到 TaskConfigurator: {}x{}, carCount={}",
                 data.get("mapWidth"), data.get("mapHeight"), data.get("carCount"));
         taskActive = false;
+        bb.clearTaskQueue();
         sendCommand(CommandType.FORWARD_CONFIG, data, ConfigConstants.QUEUE_TASK_CONFIG_CMD);
     }
 
@@ -282,6 +286,7 @@ public class ControllerAgent {
         log.info("🔄 RESET → 转发到 TaskConfigurator (forceReset=true)");
         userActivated = false;
         taskActive = false;
+        bb.clearTaskQueue();
         sendCommand(CommandType.FORWARD_CONFIG, data, ConfigConstants.QUEUE_TASK_CONFIG_CMD);
     }
 

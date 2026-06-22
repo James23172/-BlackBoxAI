@@ -218,7 +218,10 @@ public class CommandReceiver extends WebSocketServer {
         } else {
             // 默认全局开始
             blackboard.setGlobalPause(false);
+            // 1. 唤醒 Controller（否则 taskActive=false 时 Controller 不消费 taskQueue）
             blackboard.setTaskActive(true);
+            // 2. 推送 START 到 taskQueue，让 Controller.handleStartTask 检查配置并激活
+            blackboard.pushTask("START", (Map<String, String>) null);
             LOG.info("全局开始");
         }
     }

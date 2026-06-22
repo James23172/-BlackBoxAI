@@ -19,17 +19,17 @@ import java.util.*;
  * 这是 common 模块最核心的类，所有其他模块只通过此类访问 Redis。
  *
  * Redis Key 约定（参见 ConfigConstants）:
- *   map:view             → Bitmap   (已探索=1)
- *   map:blocked          → Bitmap   (障碍物/小车=1)
- *   car:{carId}:status   → String   (CarStatus.name())
- *   car:{carId}:position → Hash     {x, y}
- *   car:{carId}:steps    → String   (整数)
- *   car:{carId}:target   → String   (JSON of Point)
- *   car:{carId}:route    → List     (Point JSON，LPUSH/RPOP)
- *   car:{carId}:blocked_tick → String
- *   config:task          → Hash     (taskActive, mapWidth, mapHeight, ...)
- *   lock:car:{carId}     → String   (分布式锁)
- *   lock:controller      → String   (单实例锁)
+ * map:view → Bitmap (已探索=1)
+ * map:blocked → Bitmap (障碍物/小车=1)
+ * car:{carId}:status → String (CarStatus.name())
+ * car:{carId}:position → Hash {x, y}
+ * car:{carId}:steps → String (整数)
+ * car:{carId}:target → String (JSON of Point)
+ * car:{carId}:route → List (Point JSON，LPUSH/RPOP)
+ * car:{carId}:blocked_tick → String
+ * config:task → Hash (taskActive, mapWidth, mapHeight, ...)
+ * lock:car:{carId} → String (分布式锁)
+ * lock:controller → String (单实例锁)
  */
 public class BlackboardClient {
     private static final Logger log = LoggerFactory.getLogger(BlackboardClient.class);
@@ -208,12 +208,15 @@ public class BlackboardClient {
     /** 从 Redis config:task 刷新地图尺寸（最多每秒一次） */
     public void refreshMapConfig() {
         long now = System.currentTimeMillis();
-        if (now - lastConfigRefresh < 1000) return;
+        if (now - lastConfigRefresh < 1000)
+            return;
         try (Jedis jedis = pool.getResource()) {
             String w = jedis.hget(ConfigConstants.KEY_TASK_CONFIG, "mapWidth");
             String h = jedis.hget(ConfigConstants.KEY_TASK_CONFIG, "mapHeight");
-            if (w != null) mapWidth = Integer.parseInt(w);
-            if (h != null) mapHeight = Integer.parseInt(h);
+            if (w != null)
+                mapWidth = Integer.parseInt(w);
+            if (h != null)
+                mapHeight = Integer.parseInt(h);
         } catch (Exception e) {
             // config:task may not exist yet, ignore
         }
@@ -232,8 +235,15 @@ public class BlackboardClient {
         return pool.getResource();
     }
 
-    public int getMapWidth() { refreshMapConfig(); return mapWidth; }
-    public int getMapHeight() { refreshMapConfig(); return mapHeight; }
+    public int getMapWidth() {
+        refreshMapConfig();
+        return mapWidth;
+    }
+
+    public int getMapHeight() {
+        refreshMapConfig();
+        return mapHeight;
+    }
 
     /** 获取 bitmap 版本号（跨进程缓存失效用） */
     private long getBitmapVersion(String versionKey) {
@@ -278,6 +288,8 @@ public class BlackboardClient {
 
     /** 从已读取的字节数组解码为 boolean 二维数组 */
     private boolean[][] decodeCachedBitmap(byte[] data, int width, int height) {
+        if (data == null)
+            return new boolean[ConfigConstants.MAP_CHUNK_SIZE][ConfigConstants.MAP_CHUNK_SIZE];
         boolean[][] grid = new boolean[height][width];
         for (int y = 0; y < height; y++) {
             for (int x = 0; x < width; x++) {
@@ -641,7 +653,8 @@ public class BlackboardClient {
     public Point getCarPosition(String carId) {
         try (Jedis jedis = pool.getResource()) {
             Map<String, String> map = jedis.hgetAll(ConfigConstants.carPositionKey(carId));
-            if (map.isEmpty()) return null;
+            if (map.isEmpty())
+                return null;
             int x = Integer.parseInt(map.getOrDefault("x", "0"));
             int y = Integer.parseInt(map.getOrDefault("y", "0"));
             return new Point(x, y);
@@ -732,7 +745,8 @@ public class BlackboardClient {
     public Point peekNextStep(String carId) {
         try (Jedis jedis = pool.getResource()) {
             List<String> list = jedis.lrange(ConfigConstants.carRouteKey(carId), -1, -1);
-            if (list.isEmpty()) return null;
+            if (list.isEmpty())
+                return null;
             return JSON.parseObject(list.get(0), Point.class);
         }
     }
@@ -811,25 +825,31 @@ public class BlackboardClient {
         }
     }
 
-    /** 获取探索数量 */
+    /** 获取探索数量（排除被障碍物占用的位，避免与障碍物位重叠导致探索率 > 100%） */
     public int getExploredCount() {
         refreshMapConfig();
         int rows = (mapHeight + ConfigConstants.CHUNK_SIZE - 1) / ConfigConstants.CHUNK_SIZE;
         int cols = (mapWidth  + ConfigConstants.CHUNK_SIZE - 1) / ConfigConstants.CHUNK_SIZE;
         try (Jedis jedis = pool.getResource()) {
             var pipeline = jedis.pipelined();
-            java.util.List<redis.clients.jedis.Response<Long>> responses = new java.util.ArrayList<>();
+            java.util.List<redis.clients.jedis.Response<Long>> viewResponses = new java.util.ArrayList<>();
+            java.util.List<redis.clients.jedis.Response<Long>> blockedResponses = new java.util.ArrayList<>();
             for (int cr = 0; cr < rows; cr++) {
                 for (int cc = 0; cc < cols; cc++) {
-                    responses.add(pipeline.bitcount(ConfigConstants.mapViewChunkKey(cr, cc)));
+                    viewResponses.add(pipeline.bitcount(ConfigConstants.mapViewChunkKey(cr, cc)));
+                    blockedResponses.add(pipeline.bitcount(ConfigConstants.mapBlockedChunkKey(cr, cc)));
                 }
             }
             pipeline.sync();
-            int count = 0;
-            for (var resp : responses) {
-                count += resp.get();
+            int viewCount = 0;
+            int blockedCount = 0;
+            for (var resp : viewResponses) {
+                viewCount += resp.get();
             }
-            return count;
+            for (var resp : blockedResponses) {
+                blockedCount += resp.get();
+            }
+            return Math.max(0, viewCount - blockedCount);
         }
     }
 
@@ -838,7 +858,8 @@ public class BlackboardClient {
         refreshMapConfig();
         int obstacleCount = getObstacleCount();
         int explorable = mapWidth * mapHeight - obstacleCount;
-        if (explorable <= 0) return 100.0;
+        if (explorable <= 0)
+            return 100.0;
         double pct = getExploredCount() * 100.0 / explorable;
         return Math.min(100.0, pct);
     }
@@ -859,6 +880,7 @@ public class BlackboardClient {
 
     /**
      * 增量添加小车（不触发 flushDB，保持探索状态）
+     * 
      * @param carId 小车 ID (e.g., "Car005")
      * @param x     X 坐标
      * @param y     Y 坐标
@@ -893,6 +915,7 @@ public class BlackboardClient {
 
     /**
      * 增量移除小车（不触发 flushDB，保持其他小车状态）
+     * 
      * @param carId 小车 ID
      */
     public void removeCar(String carId) {
@@ -966,9 +989,10 @@ public class BlackboardClient {
 
     /**
      * 向 taskQueue 队尾 RPUSH 一个任务
-     * @param taskType  任务类型 (ROUTE_NEEDED / MOVE_READY / BLOCKED)
-     * @param carId     关联车辆 ID
-     * @param extra     附加字段 (可为 null)
+     * 
+     * @param taskType 任务类型 (ROUTE_NEEDED / MOVE_READY / BLOCKED)
+     * @param carId    关联车辆 ID
+     * @param extra    附加字段 (可为 null)
      */
     public void pushTask(String taskType, String carId, Map<String, String> extra) {
         try (Jedis jedis = pool.getResource()) {
@@ -999,13 +1023,15 @@ public class BlackboardClient {
 
     /**
      * 从 taskQueue 队首 LPOP 一个任务
+     * 
      * @return 任务 Map, 队列为空返回 null
      */
     @SuppressWarnings("unchecked")
     public Map<String, String> popTask() {
         try (Jedis jedis = pool.getResource()) {
             String json = jedis.lpop(ConfigConstants.KEY_TASK_QUEUE);
-            if (json == null) return null;
+            if (json == null)
+                return null;
             return JSON.parseObject(json, Map.class);
         }
     }
@@ -1015,7 +1041,8 @@ public class BlackboardClient {
     public Map<String, String> blockingPopTask(int timeoutSeconds) {
         try (Jedis jedis = pool.getResource()) {
             List<String> result = jedis.blpop(timeoutSeconds, ConfigConstants.KEY_TASK_QUEUE);
-            if (result == null || result.size() < 2) return null;
+            if (result == null || result.size() < 2)
+                return null;
             return JSON.parseObject(result.get(1), Map.class);
         }
     }
@@ -1094,7 +1121,8 @@ public class BlackboardClient {
     public Point getRandomUnexplored() {
         try (Jedis jedis = pool.getResource()) {
             String member = jedis.srandmember(ConfigConstants.KEY_UNEXPLORED_SET);
-            if (member == null) return null;
+            if (member == null)
+                return null;
             String[] parts = member.split(",");
             return new Point(Integer.parseInt(parts[0]), Integer.parseInt(parts[1]));
         }
@@ -1112,14 +1140,26 @@ public class BlackboardClient {
     /** 仅 TaskConfigurator 调用：清空所有数据 */
     public void clearAll() {
         try (Jedis jedis = pool.getResource()) {
-            jedis.flushDB();
+            String[] patterns = { "map:*", "car:*", "config:*", "lock:*", "unexplored:*", "taskQueue", "chunks:*",
+                    "replay:*", "pause:*" };
+            Set<String> toDelete = new HashSet<>();
+            for (String pattern : patterns) {
+                toDelete.addAll(jedis.keys(pattern));
+            }
+            if (!toDelete.isEmpty()) {
+                jedis.del(toDelete.toArray(new String[0]));
+            }
             // 清除本地缓存
             cachedMapViewBytes = null;
             cachedMapViewVersion = -1;
             cachedMapBlockedBytes = null;
             cachedMapBlockedVersion = -1;
+<<<<<<< HEAD
             invalidateAllChunkCache();
             log.info("Redis 数据库已清空 (FLUSHDB)");
+=======
+            log.info("Redis 数据已清空 (targeted deletion, {} keys)", toDelete.size());
+>>>>>>> 45d5815 (稳定版本)
         }
     }
 
