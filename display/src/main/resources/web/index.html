@@ -185,6 +185,7 @@ var targetPositions = {};
 //  ROUTE GUARD
 // ====================================================================
 var authServer = 'http://localhost:8890';  // 默认值，可由 /api/config 覆盖
+var REPLAY_SERVER = 'http://localhost:8893';  // 默认值，可由 /api/config 覆盖
 var MACHINE_ID = '主';                      // 默认值
 var WS_PORT = 8887;                         // 默认值，可由 /api/config 覆盖
 
@@ -195,6 +196,7 @@ async function loadConfig() {
         if (cfg.authServer) authServer = cfg.authServer;
         if (cfg.machine) MACHINE_ID = cfg.machine;
         if (cfg.wsPort)   WS_PORT = cfg.wsPort;
+        if (cfg.replayServer) REPLAY_SERVER = cfg.replayServer;
         if (cfg.version) checkVersion(cfg.version);
     } catch(e) { /* 保持默认值 localhost */ }
 }
@@ -396,8 +398,8 @@ function buildPanel(role) {
                     '<button onclick="replayStep(10)" style="background:var(--bg-input);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:4px 8px;cursor:pointer;font-size:11px">⏭</button>' +
                 '</div>',
                 '<div style="margin-bottom:8px"><select id="replaySpeed" onchange="replaySpeedChange()" style="background:var(--bg-input);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:3px 8px;font-size:11px"><option value="0.5">0.5x</option><option value="1" selected>1x</option><option value="2">2x</option><option value="4">4x</option></select></div>',
-                '<input type="range" id="replaySlider" min="0" max="100" value="0" oninput="replaySeek(this.value)" style="width:100%;margin-bottom:8px">',
-                '<div style="font-size:10px;color:var(--text3)" id="replayInfo">未加载快照 — 点击回放模式加载</div>'
+                '<input type="range" id="replaySlider" min="0" max="100" value="0" oninput="replaySeek(this.value)" style="width:100%;margin-bottom:8px;display:none">',
+                '<div style="font-size:10px;color:var(--text3);display:none" id="replayInfo">未加载快照 — 点击回放模式加载</div>'
             ]) +
             section('探索率',[
                 '<canvas id="chartCanvas" width="280" height="160" style="width:100%;border-radius:6px"></canvas>'
@@ -510,7 +512,6 @@ function sendCmd(type, scope) {
     }
     ws.send(JSON.stringify(msg));
 }
-
 function addCar() {
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
     var cars = (currentState&&currentState.cars)||[];
@@ -788,21 +789,22 @@ function setReplayMode(on) {
 
 async function replayLoad() {
     try {
-        var r = await fetch('http://localhost:8893/api/replay/list');
+        var r = await fetch(REPLAY_SERVER + '/api/replay/list');
         var indices = await r.json();
         if (indices.length === 0) {
             document.getElementById('replayInfo').textContent = '无快照数据';
+            document.getElementById('replayInfo').style.display = '';
             return;
         }
-        var br = await fetch('http://localhost:8893/api/replay/snapshots?from=0&to=' + (indices.length - 1));
+        var br = await fetch(REPLAY_SERVER + '/api/replay/snapshots?from=0&to=' + (indices.length - 1));
         replaySnapshots = await br.json();
         replayMaxTick = replaySnapshots.length;
         document.getElementById('replayRange').textContent = replayMaxTick - 1;
         document.getElementById('replaySlider').max = replayMaxTick - 1;
-        replayExploredRates = replaySnapshots.map(function(s){return s.exploredRate||0});
+        replayExploredRates = replaySnapshots.map(function(s){var o=typeof s==='string'?JSON.parse(s):s; return o.exploredRate||0});
         drawExploredChart();
         document.getElementById('replayInfo').textContent = '共 ' + replayMaxTick + ' 帧快照';
-    } catch(e) { document.getElementById('replayInfo').textContent = '回放服务未启动 (localhost:8893)'; }
+    } catch(e) { document.getElementById('replayInfo').textContent = '回放服务未启动 (' + REPLAY_SERVER + ')'; }
 }
 
 function replayToggle() {
@@ -832,8 +834,9 @@ function replaySeek(val) {
 function replayRender(idx) {
     document.getElementById('replayCurrent').textContent = idx;
     document.getElementById('replaySlider').value = idx;
-    // 将 snapshot JSON 转为兼容 render() 的格式
+    // 快照在 Redis 中以 JSON 字符串存储, BatchHandler 返回的 JSON 数组元素仍是字符串,需要 parse
     var snap = replaySnapshots[idx];
+    if (typeof snap === 'string') snap = JSON.parse(snap);
     if (snap.mapBits) {
         snap.mapView = [];
         for (var y = 0; y < (snap.mapHeight||40); y++) {
@@ -844,6 +847,22 @@ function replayRender(idx) {
             snap.mapView.push(row);
         }
     }
+    // 从 blockedBits 恢复障碍物坐标（render() 需要 obstacles 数组）
+    if (snap.blockedBits) {
+        snap.obstacles = [];
+        for (var y = 0; y < (snap.mapHeight||40); y++) {
+            for (var x = 0; x < (snap.mapWidth||40); x++) {
+                if (snap.blockedBits[y*snap.mapWidth + x] === '1') {
+                    snap.obstacles.push({x: x, y: y});
+                }
+            }
+        }
+    }
+    // 补充 render() 需要的字段
+    if (!snap.cars) snap.cars = [];
+    if (!snap.globalPaused) snap.globalPaused = false;
+    if (!snap.completed) snap.completed = false;
+    if (!snap.exploredRate) snap.exploredRate = 0;
     render(snap);
 }
 

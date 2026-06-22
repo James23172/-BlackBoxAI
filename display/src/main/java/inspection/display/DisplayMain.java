@@ -41,6 +41,9 @@ public class DisplayMain {
         String authHost = argsParser.get("--auth-host", null);
         if (authHost == null) authHost = redisHost;  // 默认跟随 Redis 主机（分布式场景下 Auth + Redis 同机部署）
         int authPort = argsParser.getInt("--auth-port", 8890);
+        String replayHost = argsParser.get("--replay-host", null);
+        if (replayHost == null) replayHost = redisHost;  // 默认跟随 Redis 主机（Replay + Redis 同机部署）
+        int replayPort = argsParser.getInt("--replay-port", 8893);
 
         // --port 兼容旧调用方式：同时设置 ws 和 http 端口
         if (argsParser.get("--port", null) != null) {
@@ -77,7 +80,7 @@ public class DisplayMain {
         String contentVersion = computeContentVersion();
         LOG.info("前端内容版本: {}", contentVersion);
         httpServer.createContext("/", new StaticFileHandler());
-        httpServer.createContext("/api/config", new ConfigHandler(machineId, authHost, authPort, wsPort, contentVersion));
+        httpServer.createContext("/api/config", new ConfigHandler(machineId, authHost, authPort, wsPort, contentVersion, replayHost, replayPort));
         httpServer.setExecutor(null);
         httpServer.start();
         LOG.info("HTTP 服务器已启动，端口: {}，访问 http://localhost:{}/index.html", httpPort, httpPort);
@@ -197,13 +200,18 @@ public class DisplayMain {
         private final int authPort;
         private final int wsPort;
         private final String contentVersion;
+        private final String replayHost;
+        private final int replayPort;
 
-        ConfigHandler(String machineId, String authHost, int authPort, int wsPort, String contentVersion) {
+        ConfigHandler(String machineId, String authHost, int authPort, int wsPort, String contentVersion,
+                      String replayHost, int replayPort) {
             this.machineId = machineId;
             this.authHost = authHost;
             this.authPort = authPort;
             this.wsPort = wsPort;
             this.contentVersion = contentVersion;
+            this.replayHost = replayHost;
+            this.replayPort = replayPort;
         }
 
         @Override
@@ -213,6 +221,7 @@ public class DisplayMain {
             cfg.put("authServer", "http://" + authHost + ":" + authPort);
             cfg.put("wsPort", wsPort);
             cfg.put("version", contentVersion);
+            cfg.put("replayServer", "http://" + replayHost + ":" + replayPort);
             byte[] bytes = cfg.toJSONString().getBytes(StandardCharsets.UTF_8);
             exchange.getResponseHeaders().set("Content-Type", "application/json; charset=utf-8");
             exchange.getResponseHeaders().set("Access-Control-Allow-Origin", "*");
