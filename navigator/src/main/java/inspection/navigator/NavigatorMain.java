@@ -5,7 +5,6 @@ import com.alibaba.fastjson2.JSONObject;
 import com.rabbitmq.client.Channel;
 import com.rabbitmq.client.DeliverCallback;
 import inspection.common.client.BlackboardClient;
-import inspection.common.client.DistributedLock;
 import inspection.common.client.MessageBusClient;
 import inspection.common.config.ArgsParser;
 import inspection.common.config.ConfigConstants;
@@ -171,22 +170,12 @@ public class NavigatorMain {
             return;
         }
 
-        // ──── 3. 写入路径 + 入队 MOVE_READY ────
-        DistributedLock carLock = blackboard.getCarLock(carId);
-        if (carLock.tryLock()) {
-            try {
-                blackboard.clearRoute(carId);
-                blackboard.pushRoute(carId, path);
-                blackboard.setCarStatus(carId, CarStatus.IDLE);
-                blackboard.pushTask("MOVE_READY", carId, null);
-                LOG.info("📤 [Navigator] pushTask(MOVE_READY) → Redis taskQueue, carId={}", carId);
-            } finally {
-                carLock.unlock();
-            }
-        } else {
-            LOG.warn("获取小车 {} 锁失败", carId);
-            handleNavigateFailed(carId);
-        }
+        // ──── 3. 写入路径 + 入队 MOVE_READY（不加锁，Redis 写操作本身原子） ────
+        blackboard.clearRoute(carId);
+        blackboard.pushRoute(carId, path);
+        blackboard.setCarStatus(carId, CarStatus.IDLE);
+        blackboard.pushTask("MOVE_READY", carId, null);
+        LOG.info("📤 [Navigator] pushTask(MOVE_READY) → Redis taskQueue, carId={}", carId);
     }
 
     /** 路径规划失败：标记不可达目标为"已尝试"，清理，重新入队 ROUTE_NEEDED */
