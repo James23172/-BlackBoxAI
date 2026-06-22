@@ -251,10 +251,10 @@ public class CommandReceiver extends WebSocketServer {
         int x = json.getIntValue("x", 15);
         int y = json.getIntValue("y", 15);
 
-        // 限制小车总数不超过 8 辆
+        // 限制小车总数不超过 4 辆
         List<String> existingCars = blackboard.getAllCarIds();
-        if (existingCars.size() >= 8) {
-            LOG.warn("ADD_CAR 拒绝: 小车已达上限 8 辆 (当前 {} 辆)", existingCars.size());
+        if (existingCars.size() >= 4) {
+            LOG.warn("ADD_CAR 拒绝: 小车已达上限 4 辆 (当前 {} 辆)", existingCars.size());
             return;
         }
 

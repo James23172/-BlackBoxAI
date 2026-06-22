@@ -36,7 +36,7 @@ public class DisplayMain {
         String rabbitPass = argsParser.get("--mq-pass", ConfigConstants.RABBITMQ_PASS);
         int wsPort = argsParser.getInt("--ws-port", 8887);
         int httpPort = argsParser.getInt("--http-port", 8888);
-        int carCount = argsParser.getInt("--car-count", 8);
+        int carCount = argsParser.getInt("--car-count", 4);
         String machineId = argsParser.get("--machine", "主");
         String authHost = argsParser.get("--auth-host", null);
         if (authHost == null) authHost = redisHost;  // 默认跟随 Redis 主机（分布式场景下 Auth + Redis 同机部署）
