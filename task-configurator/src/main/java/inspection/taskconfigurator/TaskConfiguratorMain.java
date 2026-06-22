@@ -213,6 +213,7 @@ public class TaskConfiguratorMain {
      * 每辆车分配到对应格子的中心点。
      */
     private List<Point> computeSpawnPoints(int mapWidth, int mapHeight, int carCount) {
+        if (carCount <= 0) return new ArrayList<>();
         int cols = (int) Math.ceil(Math.sqrt(carCount));
         int rows = (int) Math.ceil((double) carCount / cols);
         int cellW = mapWidth / cols;

@@ -21,7 +21,7 @@ public class Launcher {
     private static final File PROJECT_ROOT = detectProjectRoot();
     private static final String M2 = System.getProperty("user.home") + "\\.m2\\repository";
     private static final List<Process> processes = new ArrayList<>();
-    private static int carCount = 4;            // --cars N
+    private static int carCount = 8;            // --cars N
     private static int controllerInstances = 1; // --controller-instances N
     private static int displayHttpPort = 8888; // --display-http-port N
 

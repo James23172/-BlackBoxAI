@@ -77,7 +77,7 @@ public final class ConfigConstants {
     public static final int BLOCKED_TIMEOUT_TICKS = 2;   // 受阻超时节拍
 
     // ==================== 节拍参数 ====================
-    public static final int TICK_INTERVAL_MS = 200;
+    public static final int TICK_INTERVAL_MS = 350;
 
     // ==================== 分布式锁参数 ====================
     public static final int LOCK_EXPIRE_SECONDS = 30;

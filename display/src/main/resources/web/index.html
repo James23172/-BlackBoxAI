@@ -346,7 +346,7 @@ function buildPanel(role) {
         p.innerHTML =
             section('地图配置',[
                 row([f('地图宽度','mapWidth','40','number',10,80),f('地图高度','mapHeight','40','number',10,80)]),
-                row([f('小车数量','carCount','4','number',1,20),f('障碍物密度','obstacleDensity','0.1','number',0,1,0.05)]),
+                row([f('小车数量','carCount','8','number',0,20),f('障碍物密度','obstacleDensity','0.1','number',0,1,0.05)]),
                 '<div style="font-size:10px;color:var(--text3);margin-bottom:6px">右键点击地图格子切换障碍物</div>'
             ]) +
             section('障碍物编辑',[
@@ -505,7 +505,7 @@ function sendCmd(type, scope) {
     if (type === 'RESET') {
         msg.mapWidth = parseInt((document.getElementById('mapWidth')||{}).value) || 40;
         msg.mapHeight = parseInt((document.getElementById('mapHeight')||{}).value) || 40;
-        msg.carCount = parseInt((document.getElementById('carCount')||{}).value) || 4;
+        msg.carCount = parseInt((document.getElementById('carCount')||{}).value) || 8;
         msg.obstacleDensity = parseFloat((document.getElementById('obstacleDensity')||{}).value) || 0.1;
     }
     ws.send(JSON.stringify(msg));
@@ -514,7 +514,7 @@ function sendCmd(type, scope) {
 function addCar() {
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
     var cars = (currentState&&currentState.cars)||[];
-    if (cars.length >= 4) { alert('小车已达上限 4 辆'); return; }
+    if (cars.length >= 8) { alert('小车已达上限 8 辆'); return; }
     var used = {}; cars.forEach(function(c){used[c.carId]=true});
     var n = 1; while(used['Car'+String(n).padStart(3,'0')]) n++;
     ws.send(JSON.stringify({type:'ADD_CAR', carId:'Car'+String(n).padStart(3,'0'), x:Math.floor(Math.random()*30)+5, y:Math.floor(Math.random()*30)+5}));
@@ -522,7 +522,7 @@ function addCar() {
 function addMyCar() {
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
     var cars = (currentState&&currentState.cars)||[];
-    if (cars.length >= 4) { alert('小车已达上限 4 辆'); return; }
+    if (cars.length >= 8) { alert('小车已达上限 8 辆'); return; }
     var used = {}; cars.forEach(function(c){used[c.carId]=true});
     var n = 1; while(used['Car'+String(n).padStart(3,'0')]) n++;
     ws.send(JSON.stringify({type:'ADD_CAR', carId:'Car'+String(n).padStart(3,'0'),
@@ -543,6 +543,13 @@ function getColor(cell, x, y, obstacles) {
 }
 
 var _lastFullMap = null;
+var _prevCarPositions = {};    // 上一帧小车位置，用于插值过渡
+var _nextCarPositions = {};    // 当前帧小车目标位置
+var _frameTime = 0;
+
+function render(state) {
+    if (!state) return;
+    _frameTime = Date.now();
 
 function render(state) {
     if (!state) return;
@@ -568,10 +575,23 @@ function render(state) {
         }
     _lastFullMap = state.mapView;
 
-    // Cars (always redraw on top)
+    // Cars (always redraw on top, 带位置插值平滑)
     (state.cars||[]).forEach(function(car){
         if (!car.position) return;
-        var cx = car.position.x*cellSize+cellSize/2, cy = car.position.y*cellSize+cellSize/2;
+        var cid = car.carId;
+        // 保存目标位置
+        _nextCarPositions[cid] = {x: car.position.x, y: car.position.y};
+        // 如果上一帧没有位置，直接设为目标位置
+        if (!_prevCarPositions[cid]) {
+            _prevCarPositions[cid] = {x: car.position.x, y: car.position.y};
+        }
+        // 插值：向目标移动 60%
+        var pp = _prevCarPositions[cid];
+        var np = _nextCarPositions[cid];
+        var ix = pp.x + (np.x - pp.x) * 0.6;
+        var iy = pp.y + (np.y - pp.y) * 0.6;
+        _prevCarPositions[cid] = {x: ix, y: iy};
+        var cx = ix*cellSize+cellSize/2, cy = iy*cellSize+cellSize/2;
         var r = Math.max(cellSize/2-2, 4);
         var color = CAR_STATUS_COLORS[car.status] || '#FFF';
 
