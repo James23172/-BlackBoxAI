@@ -438,9 +438,9 @@ public class Launcher {
 
     // ==================== 基础设施检查 ====================
 
-    /** 清理上次残留的 AuthServer(8890) 和 ReplayServer(8893) 端口占用 */
+    /** 清理上次残留的端口占用 (AuthServer:8890, ReplayServer:8893, Display HTTP:8888, WebSocket:8887) */
     private static void cleanupReservedPorts() {
-        for (int port : new int[]{8890, 8893}) {
+        for (int port : new int[]{8890, 8893, 8888, 8887}) {
             try {
                 Process p = new ProcessBuilder("cmd", "/c",
                         "netstat -ano | findstr :" + port).start();

@@ -518,7 +518,6 @@ function selectCarFromTable(id) { selectedCarId = id; render(currentState); }
 // ====================================================================
 //  RENDER (Double-buffered canvas + incremental table)
 // ====================================================================
-var _CHUNK_SIZE = 16;
 var _colCache = {};
 function getColor(cell, x, y, obstacles) {
     var k = x+','+y;
@@ -528,7 +527,6 @@ function getColor(cell, x, y, obstacles) {
 }
 
 var _lastFullMap = null;
-var _CHUNK_SIZE = 8;
 
 function render(state) {
     if (!state) return;
@@ -545,38 +543,14 @@ function render(state) {
     var off = document.createElement('canvas'); off.width = W; off.height = H;
     var c = off.getContext('2d');
 
-    if (state.fullMap || !_lastFullMap) {
-        canvas.width = W; canvas.height = H;  // 仅全量帧清空画布
-        // 全量渲染 grid cells
-        for (var y = 0; y < rows; y++)
-            for (var x = 0; x < cols; x++) {
-                c.fillStyle = obs[x+','+y] ? '#5c3d2e' : (state.mapView[y]&&state.mapView[y][x] ? '#1e4d3a' : '#1a2436');
-                c.fillRect(x*cellSize, y*cellSize, cellSize-1, cellSize-1);
-            }
-        _lastFullMap = state.mapView;
-    } else if (state.changedChunks) {
-        // 增量：从 _lastFullMap 重绘全部格子（纯内存，无旧车图形残留）
-        for (var y = 0; y < rows; y++)
-            for (var x = 0; x < cols; x++) {
-                c.fillStyle = obs[x+','+y] ? '#5c3d2e'
-                    : (_lastFullMap[y] && _lastFullMap[y][x] ? '#1e4d3a' : '#1a2436');
-                c.fillRect(x*cellSize, y*cellSize, cellSize-1, cellSize-1);
-            }
-        // 叠绘 changed chunks + 更新 _lastFullMap
-        state.changedChunks.forEach(function(chunk) {
-            for (var ly = 0; ly < chunk.data.length; ly++) {
-                for (var lx = 0; lx < chunk.data[ly].length; lx++) {
-                    var gx = chunk.chunkCol * _CHUNK_SIZE + lx, gy = chunk.chunkRow * _CHUNK_SIZE + ly;
-                    if (gy < rows && gx < cols) {
-                        if (!_lastFullMap[gy]) _lastFullMap[gy] = [];
-                        _lastFullMap[gy][gx] = chunk.data[ly][lx];
-                        c.fillStyle = obs[gx+','+gy] ? '#5c3d2e' : (chunk.data[ly][lx] ? '#1e4d3a' : '#1a2436');
-                        c.fillRect(gx*cellSize, gy*cellSize, cellSize-1, cellSize-1);
-                    }
-                }
-            }
-        });
-    }
+    // 全量渲染（无分块，每帧都全量发送）
+    canvas.width = W; canvas.height = H;
+    for (var y = 0; y < rows; y++)
+        for (var x = 0; x < cols; x++) {
+            c.fillStyle = obs[x+','+y] ? '#5c3d2e' : (state.mapView[y]&&state.mapView[y][x] ? '#1e4d3a' : '#1a2436');
+            c.fillRect(x*cellSize, y*cellSize, cellSize-1, cellSize-1);
+        }
+    _lastFullMap = state.mapView;
 
     // Cars (always redraw on top)
     (state.cars||[]).forEach(function(car){

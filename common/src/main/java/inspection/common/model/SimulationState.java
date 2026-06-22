@@ -17,8 +17,7 @@ public class SimulationState {
     public long tick;                          // 当前节拍号
     public boolean completed;                  // 是否巡检完成
     public boolean globalPaused;                // 全局暂停状态
-    public boolean fullMap;                           // true=全量帧, false=增量帧
-    public List<inspection.common.client.BlackboardClient.MapChunk> changedChunks;  // 增量变更列表
+    public boolean fullMap;                           // 始终为 true（无分块，每次全量）
 
     public SimulationState() {}
 
@@ -52,4 +51,7 @@ public class SimulationState {
 
     public boolean isGlobalPaused() { return globalPaused; }
     public void setGlobalPaused(boolean globalPaused) { this.globalPaused = globalPaused; }
+
+    public boolean isFullMap() { return fullMap; }
+    public void setFullMap(boolean fullMap) { this.fullMap = fullMap; }
 }

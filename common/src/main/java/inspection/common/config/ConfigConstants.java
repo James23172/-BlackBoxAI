@@ -66,25 +66,12 @@ public final class ConfigConstants {
     /** Bitmap 版本号 key（用于跨进程缓存失效检测） */
     public static final String KEY_MAP_VIEW_VERSION = "map:view:version";
     public static final String KEY_MAP_BLOCKED_VERSION = "map:blocked:version";
-    /** 地图分块 bitmap: map:view:chunk:%d:%d */
-    public static final String KEY_MAP_VIEW_CHUNK       = "map:view:chunk:%d:%d";
-    /** view chunk 版本号: map:view:chunk:%d:%d:ver */
-    public static final String KEY_MAP_VIEW_CHUNK_VER   = "map:view:chunk:%d:%d:ver";
-    /** blocked chunk bitmap: map:blocked:chunk:%d:%d */
-    public static final String KEY_MAP_BLOCKED_CHUNK    = "map:blocked:chunk:%d:%d";
-    /** blocked chunk 版本号: map:blocked:chunk:%d:%d:ver */
-    public static final String KEY_MAP_BLOCKED_CHUNK_VER = "map:blocked:chunk:%d:%d:ver";
-    /** 当前 tick 变更的 chunk 集合 (Set) */
-    public static final String KEY_CHUNKS_MODIFIED      = "chunks:modified";
     /** FIFO 任务队列 key（Controller LPOP/RPUSH） */
     public static final String KEY_TASK_QUEUE = "taskQueue";
 
     // ==================== 地图参数默认值 ====================
     public static final int DEFAULT_MAP_WIDTH = 40;
     public static final int DEFAULT_MAP_HEIGHT = 40;
-    /** 地图分块大小（像素），用于分块存储和按需加载 */
-    public static final int MAP_CHUNK_SIZE = 8;
-    public static final int CHUNK_SIZE = MAP_CHUNK_SIZE;
     public static final double DEFAULT_OBSTACLE_DENSITY = 0.1;
     public static final int ILLUMINATE_RADIUS = 1;      // 3×3 点亮（架构文档规定）
     public static final int BLOCKED_TIMEOUT_TICKS = 2;   // 受阻超时节拍
@@ -136,23 +123,5 @@ public final class ConfigConstants {
 
     public static String carLockKey(String carId) {
         return String.format(KEY_LOCK_CAR, carId);
-    }
-
-    // ==================== 地图分块辅助 ====================
-
-    public static String mapViewChunkKey(int r, int c) {
-        return String.format(KEY_MAP_VIEW_CHUNK, r, c);
-    }
-
-    public static String mapViewChunkVerKey(int r, int c) {
-        return String.format(KEY_MAP_VIEW_CHUNK_VER, r, c);
-    }
-
-    public static String mapBlockedChunkKey(int r, int c) {
-        return String.format(KEY_MAP_BLOCKED_CHUNK, r, c);
-    }
-
-    public static String mapBlockedChunkVerKey(int r, int c) {
-        return String.format(KEY_MAP_BLOCKED_CHUNK_VER, r, c);
     }
 }
