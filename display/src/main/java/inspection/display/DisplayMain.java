@@ -89,7 +89,7 @@ public class DisplayMain {
             JSONObject initData = new JSONObject();
             initData.put("mapWidth", ConfigConstants.DEFAULT_MAP_WIDTH);
             initData.put("mapHeight", ConfigConstants.DEFAULT_MAP_HEIGHT);
-            initData.put("carCount", carCount);
+            initData.put("carCount", 0);   // 配置员开始时不创建小车，由客户端添加
             initData.put("obstacleDensity", ConfigConstants.DEFAULT_OBSTACLE_DENSITY);
             initData.put("active", false);  // 不激活，等用户点 Start
             MQMessage initMsg = new MQMessage("FORWARD_CONFIG", initData);

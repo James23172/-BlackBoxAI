@@ -393,6 +393,7 @@ public class ControllerAgent {
                 if (next == null) continue;
                 log.debug("tickDrive: carId={}, next=({},{})", carId, next.x, next.y);
                 JSONObject moveData = new JSONObject();
+                moveData.put("carId", carId);
                 sendCommand(CommandType.MOVE_STEP, moveData, ConfigConstants.carQueueName(carId));
             } catch (Exception e) {
                 log.warn("tickDrive 车辆 {} 失败", carId, e);
