@@ -103,8 +103,8 @@ public class MessageBusClient {
             declareQueue(ConfigConstants.QUEUE_NAVIGATOR_4_CAR_ID);
             declareQueue(ConfigConstants.QUEUE_TARGET_PLANNER_CMD);
             declareQueue(ConfigConstants.QUEUE_TASK_CONFIG_CMD);
-            // 声明所有可能的小车队列（Car:001 ~ Car:004）
-            for (int i = 1; i <= 4; i++) {
+            // 声明所有可能的小车队列（预声明 Car001~Car016，实际数量由 Launcher --cars 控制）
+            for (int i = 1; i <= 16; i++) {
                 declareQueue(ConfigConstants.carQueueName(String.format("Car%03d", i)));
             }
             // 广播 Exchange

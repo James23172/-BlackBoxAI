@@ -86,6 +86,8 @@ public class AuthServerMain {
         server.createContext("/api/auth/register", new RegisterHandler());
         server.createContext("/api/auth/login", new LoginHandler());
         server.createContext("/api/auth/verify", new VerifyHandler());
+        server.createContext("/api/auth/users", new ListUsersHandler());
+        server.createContext("/api/auth/delete-user", new DeleteUserHandler());
         server.setExecutor(Executors.newFixedThreadPool(4));
         server.start();
         log.info("AuthServer 已启动，端口: 8890");
@@ -214,6 +216,71 @@ public class AuthServerMain {
         }
     }
 
+    // ==================== LIST USERS (admin only) ====================
+    static class ListUsersHandler implements HttpHandler {
+        public void handle(HttpExchange ex) throws IOException {
+            if ("OPTIONS".equals(ex.getRequestMethod())) { sendCors(ex); return; }
+            if (!"GET".equals(ex.getRequestMethod())) { send(ex, 405, error("仅支持GET")); return; }
+
+            // 验证管理员身份
+            String authHeader = ex.getRequestHeaders().getFirst("Authorization");
+            if (authHeader == null || !authHeader.startsWith("Bearer ")) {
+                send(ex, 403, error("权限不足，请先以管理员身份登录")); return;
+            }
+            String token = authHeader.substring(7);
+            String[] tokenInfo = parseToken(token);
+            if (tokenInfo == null) {
+                send(ex, 401, error("会话已过期，请重新登录")); return;
+            }
+            if (!"configurator".equals(tokenInfo[1])) {
+                send(ex, 403, error("权限不足，仅管理员可查看用户列表")); return;
+            }
+
+            var userList = users.listAll();
+            var result = JSON.toJSONString(userList);
+            send(ex, 200, result);
+        }
+    }
+
+    // ==================== DELETE USER (admin only) ====================
+    static class DeleteUserHandler implements HttpHandler {
+        public void handle(HttpExchange ex) throws IOException {
+            if ("OPTIONS".equals(ex.getRequestMethod())) { sendCors(ex); return; }
+            if (!"DELETE".equals(ex.getRequestMethod())) { send(ex, 405, error("仅支持DELETE")); return; }
+
+            // 验证管理员身份
+            String authHeader = ex.getRequestHeaders().getFirst("Authorization");
+            if (authHeader == null || !authHeader.startsWith("Bearer ")) {
+                send(ex, 403, error("权限不足，请先以管理员身份登录")); return;
+            }
+            String token = authHeader.substring(7);
+            String[] tokenInfo = parseToken(token);
+            if (tokenInfo == null) {
+                send(ex, 401, error("会话已过期，请重新登录")); return;
+            }
+            if (!"configurator".equals(tokenInfo[1])) {
+                send(ex, 403, error("权限不足，仅管理员可删除用户")); return;
+            }
+
+            try {
+                JSONObject body = JSON.parseObject(
+                    new String(ex.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+                String username = body.getString("username");
+                if (username == null || username.isEmpty()) {
+                    send(ex, 400, error("缺少用户名")); return;
+                }
+                if (!users.delete(username)) {
+                    send(ex, 400, error("删除失败（用户不存在或禁止删除管理员）")); return;
+                }
+                log.info("删除用户: {} by {}", username, tokenInfo[0]);
+                send(ex, 200, ok("用户已删除"));
+            } catch (Exception e) {
+                log.error("删除用户异常", e);
+                send(ex, 500, error("服务器内部错误"));
+            }
+        }
+    }
+
     // ==================== 工具方法 ====================
 
     private static String ok(String msg) {
@@ -233,7 +300,7 @@ public class AuthServerMain {
 
     private static void sendCors(HttpExchange ex) throws IOException {
         ex.getResponseHeaders().set("Access-Control-Allow-Origin", "*");
-        ex.getResponseHeaders().set("Access-Control-Allow-Methods", "POST, GET, OPTIONS");
+        ex.getResponseHeaders().set("Access-Control-Allow-Methods", "POST, GET, DELETE, OPTIONS");
         ex.getResponseHeaders().set("Access-Control-Allow-Headers", "Content-Type, Authorization");
         ex.sendResponseHeaders(204, -1);
     }

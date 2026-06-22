@@ -251,6 +251,13 @@ public class CommandReceiver extends WebSocketServer {
         int x = json.getIntValue("x", 15);
         int y = json.getIntValue("y", 15);
 
+        // 限制小车总数不超过 4 辆
+        List<String> existingCars = blackboard.getAllCarIds();
+        if (existingCars.size() >= 4) {
+            LOG.warn("ADD_CAR 拒绝: 小车已达上限 4 辆 (当前 {} 辆)", existingCars.size());
+            return;
+        }
+
         // 写入 car owner（使用服务端记录的 machineId，不信任客户端）
         String machine = state != null ? state.machineId : null;
         if (machine != null && !machine.isEmpty()) {

@@ -39,4 +39,26 @@ public class UserManager {
             return json != null ? JSON.parseObject(json, User.class) : null;
         }
     }
+
+    /** 获取所有用户列表（配置员管理用） */
+    public java.util.List<User> listAll() {
+        java.util.List<User> result = new java.util.ArrayList<>();
+        try (Jedis jedis = pool.getResource()) {
+            for (String key : jedis.keys(KEY_PREFIX + "*")) {
+                String json = jedis.get(key);
+                if (json != null) {
+                    result.add(JSON.parseObject(json, User.class));
+                }
+            }
+        }
+        return result;
+    }
+
+    /** 删除用户（禁止删除管理员） */
+    public boolean delete(String username) {
+        if ("admin".equals(username)) return false;
+        try (Jedis jedis = pool.getResource()) {
+            return jedis.del(KEY_PREFIX + username) > 0;
+        }
+    }
 }

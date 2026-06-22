@@ -93,6 +93,13 @@
         .user-table{width:100%;font-size:11px;border-collapse:collapse;margin-top:8px}
         .user-table td{padding:4px 6px;border-bottom:1px solid var(--border)}
 
+        .user-manager{max-width:1400px;margin:20px auto 0}
+        .um-card{background:var(--bg-card);border-radius:16px;border:1px solid var(--border);padding:20px 24px;box-shadow:var(--shadow)}
+        .um-card h3{font-size:14px;margin:0 0 12px;color:var(--text)}
+        .um-row{display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap}
+        .um-input{padding:7px 10px;border:1px solid var(--border);border-radius:6px;background:var(--bg-input);color:var(--text);font-size:12px;outline:none;flex:1;min-width:100px}
+        .um-select{padding:7px 10px;border:1px solid var(--border);border-radius:6px;background:var(--bg-input);color:var(--text);font-size:12px}
+
         .hidden{display:none!important}
         @media(max-width:900px){.main{flex-direction:column;align-items:center}.panel{width:100%;max-width:440px}}
 
@@ -136,6 +143,19 @@
     <div class="main" id="mainLayout">
         <div class="canvas-card"><canvas id="gridCanvas" width="640" height="640"></canvas></div>
         <div class="panel" id="panelContent"></div>
+    </div>
+    <div id="userManager" class="user-manager" style="display:none">
+        <div class="um-card">
+            <h3>👥 用户管理</h3>
+            <div class="um-row">
+                <input type="text" id="regUser" placeholder="用户名" class="um-input">
+                <input type="password" id="regPass" placeholder="密码" class="um-input">
+                <select id="regRole" class="um-select"><option value="operator">🔧 运行员</option><option value="analyst">📊 分析员</option></select>
+                <button class="btn" onclick="doRegister()" style="background:linear-gradient(135deg,#2563eb,#6366f1)">➕ 创建用户</button>
+            </div>
+            <div class="reg-msg" id="regMsg"></div>
+            <table class="user-table" id="userTable"><thead><tr><th>用户</th><th>角色</th><th>密码 (加密)</th><th style="width:36px">操作</th></tr></thead><tbody><tr><td colspan="4" style="color:var(--text3)">加载中...</td></tr></tbody></table>
+        </div>
     </div>
 </div>
 
@@ -315,6 +335,8 @@ function showMain(role) {
     document.getElementById('appTitle').textContent = (labels[role]||role) + '面板';
 
     buildPanel(role);
+    document.getElementById('userManager').style.display = (role === 'configurator') ? '' : 'none';
+    if (role === 'configurator') loadUsers();
     connectWebSocket();
 }
 
@@ -339,14 +361,6 @@ function buildPanel(role) {
                 '<div style="display:flex;align-items:center;gap:12px;margin-bottom:10px"><div class="explore-bar-outer"><div class="explore-bar-inner" id="exploreBar" style="width:0%"></div></div><span class="explore-value" id="exploreRate">0.0%</span></div>',
                 carTable(5),
                 '<div class="completed-badge" id="completedBadge">🎉 巡检完成！</div>'
-            ]) +
-            section('用户管理',[
-                '<div class="reg-row"><input type="text" id="regUser" placeholder="用户名"></div>',
-                '<div class="reg-row"><input type="password" id="regPass" placeholder="密码"></div>',
-                '<div class="reg-row"><label>角色：</label><select id="regRole"><option value="operator">🔧 运行员</option><option value="analyst">📊 系统分析员</option></select></div>',
-                '<button class="btn btn-full" onclick="doRegister()" style="background:linear-gradient(135deg,#2563eb,#6366f1)">➕ 创建用户</button>',
-                '<div class="reg-msg" id="regMsg"></div>',
-                '<table class="user-table" id="userTable"><tbody><tr><td style="color:var(--text3)">加载中...</td></tr></tbody></table>'
             ]) +
             section('图例',[legendHtml()]);
     } else if (role === 'operator') {
@@ -500,6 +514,7 @@ function sendCmd(type, scope) {
 function addCar() {
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
     var cars = (currentState&&currentState.cars)||[];
+    if (cars.length >= 4) { alert('小车已达上限 4 辆'); return; }
     var used = {}; cars.forEach(function(c){used[c.carId]=true});
     var n = 1; while(used['Car'+String(n).padStart(3,'0')]) n++;
     ws.send(JSON.stringify({type:'ADD_CAR', carId:'Car'+String(n).padStart(3,'0'), x:Math.floor(Math.random()*30)+5, y:Math.floor(Math.random()*30)+5}));
@@ -507,6 +522,7 @@ function addCar() {
 function addMyCar() {
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
     var cars = (currentState&&currentState.cars)||[];
+    if (cars.length >= 4) { alert('小车已达上限 4 辆'); return; }
     var used = {}; cars.forEach(function(c){used[c.carId]=true});
     var n = 1; while(used['Car'+String(n).padStart(3,'0')]) n++;
     ws.send(JSON.stringify({type:'ADD_CAR', carId:'Car'+String(n).padStart(3,'0'),
@@ -689,9 +705,61 @@ async function doRegister() {
         var j = await r.json();
         if (j.success) { m.textContent = '用户 '+u+' 创建成功'; m.style.color = 'var(--green)';
             document.getElementById('regUser').value = ''; document.getElementById('regPass').value = '';
+            loadUsers();  // 刷新用户列表
         } else { m.textContent = j.error || '注册失败'; m.style.color = 'var(--red)'; }
     } catch(e) { m.textContent = '认证服务未启动'; m.style.color = 'var(--red)'; }
 }
+
+async function loadUsers() {
+    var tb = document.getElementById('userTable');
+    if (!tb) return;
+    try {
+        var r = await fetch(authServer + '/api/auth/users', {
+            headers: { 'Authorization': 'Bearer ' + getToken() }
+        });
+        if (!r.ok) { tb.querySelector('tbody').innerHTML = '<tr><td colspan="4" style="color:var(--text3)">无法加载</td></tr>'; return; }
+        var users = await r.json();
+        if (!users || users.length === 0) {
+            tb.querySelector('tbody').innerHTML = '<tr><td colspan="4" style="color:var(--text3)">暂无其他用户</td></tr>';
+            return;
+        }
+        var html = '';
+        var roleIcons = { configurator: '👑', operator: '🔧', analyst: '📊' };
+        users.forEach(function(u) {
+            var hash = (u.passwordHash || '').substring(0, 12) + '...';
+            var delBtn = u.username === 'admin' ? '' :
+                '<button onclick="doDeleteUser(\'' + escapeHtml(u.username) + '\')" style="font-size:10px;padding:2px 6px;background:#b91c1c;color:#fff;border:none;border-radius:4px;cursor:pointer">✕</button>';
+            html += '<tr><td>' + (roleIcons[u.role]||'') + ' <b>' + escapeHtml(u.username) + '</b></td>' +
+                '<td style="color:var(--text2)">' + (roleLabels[u.role]||u.role) + '</td>' +
+                '<td style="color:var(--text3);font-size:10px;font-family:monospace">' + hash + '</td>' +
+                '<td style="text-align:center">' + delBtn + '</td></tr>';
+        });
+        tb.querySelector('tbody').innerHTML = html;
+    } catch(e) { tb.querySelector('tbody').innerHTML = '<tr><td colspan="4" style="color:var(--red)">加载失败</td></tr>'; }
+}
+
+async function doDeleteUser(username) {
+    if (!confirm('确认删除用户 ' + username + ' ？')) return;
+    try {
+        var r = await fetch(authServer + '/api/auth/delete-user', {
+            method: 'DELETE',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': 'Bearer ' + getToken()
+            },
+            body: JSON.stringify({ username: username })
+        });
+        var j = await r.json();
+        if (j.success) {
+            loadUsers();
+        } else {
+            alert(j.error || '删除失败');
+        }
+    } catch(e) { alert('认证服务未启动'); }
+}
+
+var roleLabels = { configurator: '配置员', operator: '运行员', analyst: '分析员' };
+function escapeHtml(s) { var d=document.createElement('div'); d.textContent=s; return d.innerHTML; }
 
 // ====================================================================
 //  REPLAY (analyst)
