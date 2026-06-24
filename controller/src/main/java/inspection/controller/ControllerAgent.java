@@ -311,6 +311,7 @@ public class ControllerAgent {
                 double explored = getExploredPercent();
                 if (unexploredCount == 0 && explored >= 99.9) {
                     log.info("🏁 巡检完成！未探索格子=0, 探索率={}%", explored);
+                    bb.confirmUnreachableCandidates();
                     taskActive = false;
                     bb.setTaskActive(false);
                     recording = false;  // 探索完成，自动停止录制
@@ -328,6 +329,7 @@ public class ControllerAgent {
                 saveSnapshotIfRecording();
                 if (tickCount % 20 == 0) {
                     log.info("节拍 #{} 完成，未探索剩余: {}, 探索率: {}%", tickCount, unexploredCount, explored);
+                    bb.confirmUnreachableCandidates();
                 }
             }
             broadcastViewRefresh();
@@ -493,6 +495,12 @@ public class ControllerAgent {
                 for (int x = 0; x < bb.getMapWidth(); x++)
                     sb2.append(blocked[y][x] ? '1' : '0');
             snap.put("blockedBits", sb2.toString());
+            boolean[][] unreach = bb.getUnreachable();
+            var sb3 = new StringBuilder();
+            for (int y = 0; y < bb.getMapHeight(); y++)
+                for (int x = 0; x < bb.getMapWidth(); x++)
+                    sb3.append(unreach[y][x] ? '1' : '0');
+            snap.put("unreachableBits", sb3.toString());
             // 全局暂停状态
             snap.put("globalPaused", bb.isGlobalPaused());
             // 探索完成状态

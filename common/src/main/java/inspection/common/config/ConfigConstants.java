@@ -40,6 +40,8 @@ public final class ConfigConstants {
     public static final String KEY_MAP_VIEW = "map:view";
     /** 地图障碍物 bitmap key */
     public static final String KEY_MAP_BLOCKED = "map:blocked";
+    /** 地图不可达区域 bitmap key（被障碍物包围、无法到达的格子） */
+    public static final String KEY_MAP_UNREACHABLE = "map:unreachable";
     /** 小车状态 key: car:{carId}:status */
     public static final String KEY_CAR_STATUS = "car:%s:status";
     /** 小车位置 key: car:{carId}:position */

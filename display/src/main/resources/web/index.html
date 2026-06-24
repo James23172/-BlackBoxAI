@@ -558,6 +558,8 @@ function render(state) {
     var canvas = document.getElementById('gridCanvas');
 
     var obs = {}; (state.obstacles||[]).forEach(function(p){obs[p.x+','+p.y]=true});
+    var unreach = state.unreachable || [];
+    var cand = state.unreachableCandidates || [];
 
     // Double buffer
     var off = document.createElement('canvas'); off.width = W; off.height = H;
@@ -567,7 +569,17 @@ function render(state) {
     canvas.width = W; canvas.height = H;
     for (var y = 0; y < rows; y++)
         for (var x = 0; x < cols; x++) {
-            c.fillStyle = obs[x+','+y] ? '#5c3d2e' : (state.mapView[y]&&state.mapView[y][x] ? '#1e4d3a' : '#1a2436');
+            var color = '#1a2436';
+            if (obs[x+','+y]) {
+                color = '#5c3d2e';
+            } else if (unreach[y] && unreach[y][x]) {
+                color = '#7f1d1d';
+            } else if (cand[y] && cand[y][x]) {
+                color = '#5b3d7a';
+            } else if (state.mapView[y] && state.mapView[y][x]) {
+                color = '#1e4d3a';
+            }
+            c.fillStyle = color;
             c.fillRect(x*cellSize, y*cellSize, cellSize-1, cellSize-1);
         }
     _lastFullMap = state.mapView;
@@ -861,6 +873,18 @@ function replayRender(idx) {
             }
         }
     }
+    // 从 unreachableBits 恢复不可达区域
+    if (snap.unreachableBits) {
+        snap.unreachable = [];
+        for (var y = 0; y < (snap.mapHeight||40); y++) {
+            var row = [];
+            for (var x = 0; x < (snap.mapWidth||40); x++) {
+                row.push(snap.unreachableBits[y*snap.mapWidth + x] === '1');
+            }
+            snap.unreachable.push(row);
+        }
+    } else { snap.unreachable = []; }
+    snap.unreachableCandidates = [];
     // 补充 render() 需要的字段
     if (!snap.cars) snap.cars = [];
     if (!snap.globalPaused) snap.globalPaused = false;

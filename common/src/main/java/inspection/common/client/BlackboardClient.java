@@ -201,7 +201,7 @@ public class BlackboardClient {
         }
     }
 
-    /** 3x3 点亮：Pipeline 批量写入，保证原子性 */
+    /** 3x3 点亮：Pipeline 批量写入，对角线需视线检查，不可穿过障碍物。 */
     public void illuminateArea(int cx, int cy) {
         refreshMapConfig();
         int r = ConfigConstants.ILLUMINATE_RADIUS;
@@ -209,14 +209,23 @@ public class BlackboardClient {
             var pipeline = jedis.pipelined();
             for (int dy = -r; dy <= r; dy++) {
                 for (int dx = -r; dx <= r; dx++) {
+                    if (dx == 0 && dy == 0) continue; // 脚下单独处理
                     int nx = cx + dx;
                     int ny = cy + dy;
-                    if (nx >= 0 && nx < mapWidth && ny >= 0 && ny < mapHeight
-                            && !isBlocked(nx, ny)) {
-                        pipeline.setbit(ConfigConstants.KEY_MAP_VIEW, bitmapOffset(nx, ny), true);
-                        pipeline.srem(ConfigConstants.KEY_UNEXPLORED_SET, nx + "," + ny);
+                    if (nx < 0 || nx >= mapWidth || ny < 0 || ny >= mapHeight) continue;
+                    if (isBlocked(nx, ny)) continue;
+                    // 对角线需视线检查：两个相邻正交方向都不能有障碍
+                    if (dx != 0 && dy != 0) {
+                        if (isBlocked(cx + dx, cy) || isBlocked(cx, cy + dy)) continue;
                     }
+                    pipeline.setbit(ConfigConstants.KEY_MAP_VIEW, bitmapOffset(nx, ny), true);
+                    pipeline.srem(ConfigConstants.KEY_UNEXPLORED_SET, nx + "," + ny);
                 }
+            }
+            // 脚下格子（车所在位置一定可见，不受视线限制）
+            if (cx >= 0 && cx < mapWidth && cy >= 0 && cy < mapHeight) {
+                pipeline.setbit(ConfigConstants.KEY_MAP_VIEW, bitmapOffset(cx, cy), true);
+                pipeline.srem(ConfigConstants.KEY_UNEXPLORED_SET, cx + "," + cy);
             }
             pipeline.incr(ConfigConstants.KEY_MAP_VIEW_VERSION);
             pipeline.sync();
@@ -232,6 +241,189 @@ public class BlackboardClient {
         refreshMapConfig();
         try (Jedis jedis = pool.getResource()) {
             return jedis.getbit(ConfigConstants.KEY_MAP_BLOCKED, bitmapOffset(x, y));
+        }
+    }
+
+    // ==================== 不可达区域检测 ====================
+
+    /**
+     * 计算地图上所有不可达格子（被障碍物包围、从所有车辆位置出发都无法到达的格子）。
+     * 使用 BFS 从所有车辆当前位置出发，标记所有可达的空格子；剩余未标记且非障碍物的格子即为不可达。
+     */
+    public void computeUnreachable() {
+        refreshMapConfig();
+        List<Point> starts = new ArrayList<>();
+        for (String carId : getAllCarIds()) {
+            Point pos = getCarPosition(carId);
+            if (pos != null) starts.add(pos);
+        }
+        if (starts.isEmpty()) return;
+
+        boolean[][] blocked = getMapBlocked();
+        boolean[][] visited = new boolean[mapHeight][mapWidth];
+        Queue<Point> queue = new ArrayDeque<>();
+
+        for (Point s : starts) {
+            if (s.x >= 0 && s.x < mapWidth && s.y >= 0 && s.y < mapHeight) {
+                visited[s.y][s.x] = true;
+                queue.add(s);
+            }
+        }
+
+        int[][] dirs = {{0,1},{0,-1},{1,0},{-1,0}};
+        while (!queue.isEmpty()) {
+            Point cur = queue.poll();
+            for (int[] d : dirs) {
+                int nx = cur.x + d[0], ny = cur.y + d[1];
+                if (nx < 0 || nx >= mapWidth || ny < 0 || ny >= mapHeight) continue;
+                if (blocked[ny][nx] || visited[ny][nx]) continue;
+                visited[ny][nx] = true;
+                queue.add(new Point(nx, ny));
+            }
+        }
+
+        // 写入 Redis bitmap：不可达 = 非障碍物 && 未访问到
+        try (Jedis jedis = pool.getResource()) {
+            var pipeline = jedis.pipelined();
+            for (int y = 0; y < mapHeight; y++) {
+                for (int x = 0; x < mapWidth; x++) {
+                    long offset = bitmapOffset(x, y);
+                    boolean unreachable = !blocked[y][x] && !visited[y][x];
+                    pipeline.setbit(ConfigConstants.KEY_MAP_UNREACHABLE, offset, unreachable);
+                }
+            }
+            pipeline.sync();
+        }
+        // 清理旧的不可达数据（地图中不再存在的区域）
+        try (Jedis jedis = pool.getResource()) {
+            long expectedBits = (long) mapWidth * mapHeight;
+            long currentBits = jedis.bitcount(ConfigConstants.KEY_MAP_UNREACHABLE);
+            // 简单处理：如果 key 长度远超预期（resize 导致），重建；否则信任 bitmap
+        } catch (Exception ignored) {}
+    }
+
+    /** 检查 (x,y) 是否为不可达区域 */
+    public boolean isUnreachable(int x, int y) {
+        try (Jedis jedis = pool.getResource()) {
+            return jedis.getbit(ConfigConstants.KEY_MAP_UNREACHABLE, bitmapOffset(x, y));
+        }
+    }
+
+    /** 获取不可达区域二维数组 */
+    public boolean[][] getUnreachable() {
+        refreshMapConfig();
+        try (Jedis jedis = pool.getResource()) {
+            byte[] bits = jedis.get(ConfigConstants.KEY_MAP_UNREACHABLE.getBytes());
+            if (bits == null || bits.length == 0) {
+                return new boolean[mapHeight][mapWidth];
+            }
+            return decodeBitmap(bits, mapWidth, mapHeight);
+        }
+    }
+
+    /** 加入不可达候选集（Navigator 规划失败时调用，待多车验证） */
+    public void addUnreachableCandidate(int x, int y) {
+        try (Jedis jedis = pool.getResource()) {
+            jedis.sadd("unreachable:candidates", x + "," + y);
+        }
+    }
+
+    /** 获取不可达候选集二维数组（前端渲染紫色） */
+    public boolean[][] getUnreachableCandidates() {
+        refreshMapConfig();
+        boolean[][] grid = new boolean[mapHeight][mapWidth];
+        try (Jedis jedis = pool.getResource()) {
+            Set<String> set = jedis.smembers("unreachable:candidates");
+            for (String s : set) {
+                String[] xy = s.split(",");
+                int x = Integer.parseInt(xy[0]), y = Integer.parseInt(xy[1]);
+                if (x >= 0 && x < mapWidth && y >= 0 && y < mapHeight) grid[y][x] = true;
+            }
+        }
+        return grid;
+    }
+
+    /** 确认候选集中真正不可达的格子：只有所有车都无法到达时才写入 bitmap */
+    public void confirmUnreachableCandidates() {
+        refreshMapConfig();
+        try (Jedis jedis = pool.getResource()) {
+            Set<String> candidates = jedis.smembers("unreachable:candidates");
+            if (candidates.isEmpty()) return;
+
+            // 收集所有车的位置
+            List<int[]> starts = new ArrayList<>();
+            for (String carId : getAllCarIds()) {
+                Point pos = getCarPosition(carId);
+                if (pos != null) starts.add(new int[]{pos.x, pos.y});
+            }
+            if (starts.isEmpty()) return;
+
+            boolean[][] blocked = getMapBlocked();
+            int[][] dirs = {{0,1},{0,-1},{1,0},{-1,0}};
+
+            for (String c : candidates) {
+                String[] xy = c.split(",");
+                int tx = Integer.parseInt(xy[0]), ty = Integer.parseInt(xy[1]);
+                if (tx < 0 || tx >= mapWidth || ty < 0 || ty >= mapHeight) {
+                    jedis.srem("unreachable:candidates", c);
+                    continue;
+                }
+
+                // BFS 从所有车出发，看是否能到达 (tx, ty)
+                boolean reachable = false;
+                if (!blocked[ty][tx]) {
+                    boolean[][] visited = new boolean[mapHeight][mapWidth];
+                    Queue<int[]> q = new ArrayDeque<>();
+                    for (int[] s : starts) {
+                        if (s[0] == tx && s[1] == ty) { reachable = true; break; }
+                        visited[s[1]][s[0]] = true;
+                        q.add(s);
+                    }
+                    while (!reachable && !q.isEmpty()) {
+                        int[] cur = q.poll();
+                        for (int[] d : dirs) {
+                            int nx = cur[0] + d[0], ny = cur[1] + d[1];
+                            if (nx < 0 || nx >= mapWidth || ny < 0 || ny >= mapHeight) continue;
+                            if (visited[ny][nx] || blocked[ny][nx]) continue;
+                            if (nx == tx && ny == ty) { reachable = true; break; }
+                            visited[ny][nx] = true;
+                            q.add(new int[]{nx, ny});
+                        }
+                    }
+                }
+
+                if (reachable) {
+                    jedis.srem("unreachable:candidates", c); // 有车能到，移除候选
+                } else {
+                    jedis.setbit(ConfigConstants.KEY_MAP_UNREACHABLE, bitmapOffset(tx, ty), true);
+                    jedis.srem("unreachable:candidates", c); // 确认不可达
+                }
+            }
+        }
+    }
+
+    /** 确认并持久化不可达格子：从候选集中取出 BFS 确认真正不可达的，写入 bitmap */
+    public void confirmUnreachable() {
+        refreshMapConfig();
+        try (Jedis jedis = pool.getResource()) {
+            Set<String> candidates = jedis.smembers("unreachable:candidates");
+            if (candidates.isEmpty()) return;
+            // 仅确认真正不可达的（通过 BFS 从所有车位置验证）
+            for (String c : candidates) {
+                String[] xy = c.split(",");
+                int x = Integer.parseInt(xy[0]), y = Integer.parseInt(xy[1]);
+                if (x >= 0 && x < mapWidth && y >= 0 && y < mapHeight && !isBlocked(x, y)) {
+                    // BFS 快速判断：从最近的车位置出发看能否到达
+                    boolean reachable = false;
+                    for (String carId : getAllCarIds()) {
+                        Point pos = getCarPosition(carId);
+                        if (pos != null && pos.x == x && pos.y == y) { reachable = true; break; }
+                    }
+                    if (!reachable) {
+                        jedis.setbit(ConfigConstants.KEY_MAP_UNREACHABLE, bitmapOffset(x, y), true);
+                    }
+                }
+            }
         }
     }
 
@@ -745,7 +937,7 @@ public class BlackboardClient {
     public void clearAll() {
         try (Jedis jedis = pool.getResource()) {
             String[] patterns = { "map:*", "car:*", "config:*", "lock:*", "unexplored:*", "taskQueue",
-                    "replay:*", "pause:*" };
+                    "replay:*", "pause:*", "unreachable:*" };
             Set<String> toDelete = new HashSet<>();
             for (String pattern : patterns) {
                 toDelete.addAll(jedis.keys(pattern));

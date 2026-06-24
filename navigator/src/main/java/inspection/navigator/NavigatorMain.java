@@ -187,7 +187,10 @@ public class NavigatorMain {
         Point unreachable = blackboard.getCarTarget(carId);
         if (unreachable != null) {
             blackboard.setMapViewBit(unreachable.x, unreachable.y);
-            LOG.info("标记不可达目标为已尝试: carId={}, target=({},{})", carId, unreachable.x, unreachable.y);
+            blackboard.removeFromUnexploredSet(unreachable.x, unreachable.y);
+            blackboard.clearCarTarget(carId);
+            blackboard.addUnreachableCandidate(unreachable.x, unreachable.y);
+            LOG.info("路径规划失败，标记目标为已尝试: carId={}, target=({},{})", carId, unreachable.x, unreachable.y);
         }
 
         Point carPos = blackboard.getCarPosition(carId);

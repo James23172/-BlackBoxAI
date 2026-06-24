@@ -92,6 +92,8 @@ public class StateBroadcaster {
         state.setMapHeight(mapHeight);
         state.setObstacles(blackboard.getAllBlocked());
         state.setMapView(blackboard.getMapView());
+        state.setUnreachable(blackboard.getUnreachable());
+        state.setUnreachableCandidates(blackboard.getUnreachableCandidates());
         state.fullMap = true;
         state.setCars(carStates);
         state.setExploredRate(exploredRate);

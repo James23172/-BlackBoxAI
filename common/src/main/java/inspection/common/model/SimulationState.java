@@ -10,6 +10,8 @@ public class SimulationState {
     public boolean[][] mapView;               // 地图探索状态
     public int mapWidth;
     public int mapHeight;
+    public boolean[][] unreachable;            // 确认不可达
+    public boolean[][] unreachableCandidates;  // 候选不可达
     public List<Point> obstacles;              // 障碍物坐标列表
     public List<CarState> cars;                // 所有小车状态
     public double exploredRate;                // 探索率 0.0 ~ 1.0
@@ -24,6 +26,12 @@ public class SimulationState {
     // ===== getters =====
     public boolean[][] getMapView() { return mapView; }
     public void setMapView(boolean[][] mapView) { this.mapView = mapView; }
+
+    public boolean[][] getUnreachable() { return unreachable; }
+    public void setUnreachable(boolean[][] unreachable) { this.unreachable = unreachable; }
+
+    public boolean[][] getUnreachableCandidates() { return unreachableCandidates; }
+    public void setUnreachableCandidates(boolean[][] unreachableCandidates) { this.unreachableCandidates = unreachableCandidates; }
 
     public int getMapWidth() { return mapWidth; }
     public void setMapWidth(int mapWidth) { this.mapWidth = mapWidth; }
