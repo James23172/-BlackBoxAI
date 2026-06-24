@@ -201,25 +201,39 @@ public class BlackboardClient {
         }
     }
 
-    /** 3x3 点亮：Pipeline 批量写入，保证原子性（不再清除不可达标记，不可达是车级别概念） */
+    /** 3x3 点亮：Pipeline 批量 GETBIT 替代逐个 isBlocked（减少 Redis 往返） */
     public void illuminateArea(int cx, int cy) {
         refreshMapConfig();
         int r = ConfigConstants.ILLUMINATE_RADIUS;
         try (Jedis jedis = pool.getResource()) {
-            var pipeline = jedis.pipelined();
+            // 第一阶段：Pipeline 批量 GETBIT 检查 9 个邻居的障碍物状态
+            var readPipe = jedis.pipelined();
+            List<redis.clients.jedis.Response<Boolean>> blockedChecks = new ArrayList<>();
+            List<int[]> cells = new ArrayList<>();
             for (int dy = -r; dy <= r; dy++) {
                 for (int dx = -r; dx <= r; dx++) {
                     int nx = cx + dx;
                     int ny = cy + dy;
-                    if (nx >= 0 && nx < mapWidth && ny >= 0 && ny < mapHeight
-                            && !isBlocked(nx, ny)) {
-                        pipeline.setbit(ConfigConstants.KEY_MAP_VIEW, bitmapOffset(nx, ny), true);
-                        pipeline.srem(ConfigConstants.KEY_UNEXPLORED_SET, nx + "," + ny);
+                    if (nx >= 0 && nx < mapWidth && ny >= 0 && ny < mapHeight) {
+                        blockedChecks.add(readPipe.getbit(ConfigConstants.KEY_MAP_BLOCKED, bitmapOffset(nx, ny)));
+                        cells.add(new int[]{nx, ny});
                     }
                 }
             }
-            pipeline.incr(ConfigConstants.KEY_MAP_VIEW_VERSION);
-            pipeline.sync();
+            readPipe.sync();  // 1 次往返完成 9 个 GETBIT
+
+            // 第二阶段：Pipeline 批量 SETBIT 只写非障碍物格子
+            var writePipe = jedis.pipelined();
+            for (int i = 0; i < cells.size(); i++) {
+                boolean blocked = blockedChecks.get(i).get();
+                if (!blocked) {
+                    int[] c = cells.get(i);
+                    writePipe.setbit(ConfigConstants.KEY_MAP_VIEW, bitmapOffset(c[0], c[1]), true);
+                    writePipe.srem(ConfigConstants.KEY_UNEXPLORED_SET, c[0] + "," + c[1]);
+                }
+            }
+            writePipe.incr(ConfigConstants.KEY_MAP_VIEW_VERSION);
+            writePipe.sync();  // 1 次往返完成 SETBIT
         }
         cachedMapViewBytes = null;
         cachedMapViewVersion = -1;

@@ -77,7 +77,7 @@ public class CarAgent {
                 return;
             }
 
-            Point oldPos = bb.getCarPosition(carId);
+            Point oldPos = curPos;  // 复用第42行已读取的位置，省1次Redis往返
 
             bb.setCarStatus(carId, CarStatus.MOVING);
             bb.popNextStep(carId);
