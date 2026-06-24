@@ -201,37 +201,66 @@ public class BlackboardClient {
         }
     }
 
-    /** 3x3 点亮：Pipeline 批量写入，对角线需视线检查，不可穿过障碍物。 */
+    /** 3x3 点亮：Pipeline 批量 GETBIT 简化 isBlocked（减少 Redis 往返），对角线需视线检查 */
     public void illuminateArea(int cx, int cy) {
         refreshMapConfig();
         int r = ConfigConstants.ILLUMINATE_RADIUS;
         try (Jedis jedis = pool.getResource()) {
-            var pipeline = jedis.pipelined();
+            // 第一阶段：Pipeline 批量 GETBIT 检查 3x3 区域所有 9 个格子的障碍物状态
+            var readPipe = jedis.pipelined();
+            List<redis.clients.jedis.Response<Boolean>> blockedChecks = new ArrayList<>();
+            List<int[]> cells = new ArrayList<>();
             for (int dy = -r; dy <= r; dy++) {
                 for (int dx = -r; dx <= r; dx++) {
-                    if (dx == 0 && dy == 0) continue; // 脚下单独处理
                     int nx = cx + dx;
                     int ny = cy + dy;
-                    if (nx < 0 || nx >= mapWidth || ny < 0 || ny >= mapHeight) continue;
-                    if (isBlocked(nx, ny)) continue;
-                    // 对角线需视线检查：两个相邻正交方向都不能有障碍
-                    if (dx != 0 && dy != 0) {
-                        if (isBlocked(cx + dx, cy) || isBlocked(cx, cy + dy)) continue;
+                    if (nx >= 0 && nx < mapWidth && ny >= 0 && ny < mapHeight) {
+                        blockedChecks.add(readPipe.getbit(ConfigConstants.KEY_MAP_BLOCKED, bitmapOffset(nx, ny)));
+                        cells.add(new int[]{nx, ny, dx, dy});
                     }
-                    pipeline.setbit(ConfigConstants.KEY_MAP_VIEW, bitmapOffset(nx, ny), true);
-                    pipeline.srem(ConfigConstants.KEY_UNEXPLORED_SET, nx + "," + ny);
                 }
             }
-            // 脚下格子（车所在位置一定可见，不受视线限制）
-            if (cx >= 0 && cx < mapWidth && cy >= 0 && cy < mapHeight) {
-                pipeline.setbit(ConfigConstants.KEY_MAP_VIEW, bitmapOffset(cx, cy), true);
-                pipeline.srem(ConfigConstants.KEY_UNEXPLORED_SET, cx + "," + cy);
+            readPipe.sync();  // 1 次往返完成所有 GETBIT
+
+            // 第二阶段：根据结果决定哪些格子可以点亮
+            var writePipe = jedis.pipelined();
+            for (int i = 0; i < cells.size(); i++) {
+                int[] c = cells.get(i);
+                int dx = c[2], dy = c[3];
+                boolean blocked = blockedChecks.get(i).get();
+                if (blocked) continue;
+                if (dx == 0 && dy == 0) {
+                    // 脚下格子始终可见
+                    writePipe.setbit(ConfigConstants.KEY_MAP_VIEW, bitmapOffset(c[0], c[1]), true);
+                    writePipe.srem(ConfigConstants.KEY_UNEXPLORED_SET, c[0] + "," + c[1]);
+                } else if (dx != 0 && dy != 0) {
+                    // 对角线：需要两个相邻正交方向都没有障碍（用已查结果判断）
+                    boolean adjBlockedX = getBlockedInList(cells, blockedChecks, cx + dx, cy);
+                    boolean adjBlockedY = getBlockedInList(cells, blockedChecks, cx, cy + dy);
+                    if (!adjBlockedX && !adjBlockedY) {
+                        writePipe.setbit(ConfigConstants.KEY_MAP_VIEW, bitmapOffset(c[0], c[1]), true);
+                        writePipe.srem(ConfigConstants.KEY_UNEXPLORED_SET, c[0] + "," + c[1]);
+                    }
+                } else {
+                    // 正交方向邻格
+                    writePipe.setbit(ConfigConstants.KEY_MAP_VIEW, bitmapOffset(c[0], c[1]), true);
+                    writePipe.srem(ConfigConstants.KEY_UNEXPLORED_SET, c[0] + "," + c[1]);
+                }
             }
-            pipeline.incr(ConfigConstants.KEY_MAP_VIEW_VERSION);
-            pipeline.sync();
+            writePipe.incr(ConfigConstants.KEY_MAP_VIEW_VERSION);
+            writePipe.sync();  // 1 次往返完成写入
         }
         cachedMapViewBytes = null;
         cachedMapViewVersion = -1;
+    }
+
+    /** 从批量查询结果中查找指定坐标的障碍物状态 */
+    private boolean getBlockedInList(List<int[]> cells, List<redis.clients.jedis.Response<Boolean>> results, int x, int y) {
+        for (int i = 0; i < cells.size(); i++) {
+            int[] c = cells.get(i);
+            if (c[0] == x && c[1] == y) return results.get(i).get();
+        }
+        return true; // 越界视为阻塞
     }
 
     // ------ 障碍物 ------
