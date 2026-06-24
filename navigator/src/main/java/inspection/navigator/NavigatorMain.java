@@ -178,16 +178,51 @@ public class NavigatorMain {
         LOG.info("📤 [Navigator] pushTask(MOVE_READY) → Redis taskQueue, carId={}", carId);
     }
 
-    /** 路径规划失败：标记不可达目标为"已尝试"，清理，重新入队 ROUTE_NEEDED */
+    /**
+     * 路径规划失败：智能判断是否真的无解
+     * - 周围有可达未探索区域 → 冷却 3 秒后重试
+     * - 周围无可达未探索区域 → 进入 BLOCKED 状态，停止蔓延
+     */
     private void handleNavigateFailed(String carId) {
         Point unreachable = blackboard.getCarTarget(carId);
         if (unreachable != null) {
             blackboard.setMapViewBit(unreachable.x, unreachable.y);
             LOG.info("标记不可达目标为已尝试: carId={}, target=({},{})", carId, unreachable.x, unreachable.y);
         }
-        blackboard.setCarStatus(carId, CarStatus.IDLE);
+
+        Point carPos = blackboard.getCarPosition(carId);
+        int w = blackboard.getMapWidth();
+        int h = blackboard.getMapHeight();
+
+        // 扫描周围 5×5 区域，检查是否有可达的未探索格子
+        int scanRadius = 5;
+        boolean hasReachableUnexplored = false;
+        if (carPos != null) {
+            for (int dy = -scanRadius; dy <= scanRadius && !hasReachableUnexplored; dy++) {
+                for (int dx = -scanRadius; dx <= scanRadius && !hasReachableUnexplored; dx++) {
+                    int nx = carPos.x + dx;
+                    int ny = carPos.y + dy;
+                    if (nx >= 0 && nx < w && ny >= 0 && ny < h
+                            && !blackboard.isBlocked(nx, ny)
+                            && !blackboard.isExplored(nx, ny)) {
+                        hasReachableUnexplored = true;
+                    }
+                }
+            }
+        }
+
         try { blackboard.clearCarTarget(carId); } catch (Exception e) { /* ignore */ }
-        blackboard.pushTask("ROUTE_NEEDED", carId, null);
-        LOG.info("导航失败: carId={}, 已清理目标，重新入队 ROUTE_NEEDED", carId);
+
+        if (!hasReachableUnexplored) {
+            // 真的无解 → 进入 BLOCKED，不再推送 ROUTE_NEEDED
+            blackboard.setCarStatus(carId, CarStatus.BLOCKED);
+            LOG.info("导航失败且周围无可达未探索区域: carId={}, 进入 BLOCKED", carId);
+        } else {
+            // 还有可达区域 → 冷却 3 秒后重试，避免紧密循环
+            blackboard.setCarStatus(carId, CarStatus.IDLE);
+            blackboard.setCarBlockedUntil(carId, System.currentTimeMillis() + 3000);
+            blackboard.pushTask("ROUTE_NEEDED", carId, null);
+            LOG.info("导航失败但周围有未探索区域: carId={}, 3 秒后重试", carId);
+        }
     }
 }

@@ -819,6 +819,28 @@ public class BlackboardClient {
         }
     }
 
+    /** 设置小车阻塞冷却截止时间（毫秒时间戳） */
+    public void setCarBlockedUntil(String carId, long timestamp) {
+        try (Jedis jedis = pool.getResource()) {
+            jedis.set(ConfigConstants.carBlockedUntilKey(carId), String.valueOf(timestamp));
+        }
+    }
+
+    /** 判断小车是否仍在阻塞冷却期内（冷却期内跳过移动） */
+    public boolean isCarBlockedUntil(String carId) {
+        try (Jedis jedis = pool.getResource()) {
+            String val = jedis.get(ConfigConstants.carBlockedUntilKey(carId));
+            if (val == null)
+                return false;
+            long until = Long.parseLong(val);
+            if (System.currentTimeMillis() < until)
+                return true;
+            // 冷却期已过，清除 key
+            jedis.del(ConfigConstants.carBlockedUntilKey(carId));
+            return false;
+        }
+    }
+
     /** 关闭连接池 */
     public void close() {
         if (pool != null && !pool.isClosed()) {

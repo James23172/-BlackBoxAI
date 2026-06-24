@@ -55,6 +55,12 @@ public class CarAgent {
             return;
         }
 
+        // 阻塞冷却期内跳过移动（导航失败后智能冷却）
+        if (bb.isCarBlockedUntil(carId)) {
+            log.debug("[Car:{}] 阻塞冷却中，跳过移动", carId);
+            return;
+        }
+
         // 不加分布式锁——Navigator 已移除锁，小车自己不需要锁自己
         Point next = bb.peekNextStep(carId);
             if (next == null) {
@@ -106,8 +112,11 @@ public class CarAgent {
     private void handleBlocked() {
         bb.setCarStatus(carId, CarStatus.BLOCKED);
         bb.setBlockedTick(carId, currentTick.get());
+        // 遇阻后清空路径并立即请求重新规划，避免一直 peekNextStep 返回被阻点
+        bb.clearRoute(carId);
         bb.pushTask("BLOCKED", carId, java.util.Map.of("blockedTick", String.valueOf(currentTick.get())));
-        log.warn("[Car:{}] 遇阻 → BLOCKED, tick={}, 已入队BLOCKED", carId, currentTick.get());
+        bb.pushTask("ROUTE_NEEDED", carId, null);
+        log.warn("[Car:{}] 遇阻 → BLOCKED, tick={}, 已清空路径, 推 ROUTE_NEEDED 重新规划", carId, currentTick.get());
     }
 
     private void handleRouteDone() {

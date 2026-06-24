@@ -68,6 +68,8 @@ public final class ConfigConstants {
     public static final String KEY_MAP_BLOCKED_VERSION = "map:blocked:version";
     /** FIFO 任务队列 key（Controller LPOP/RPUSH） */
     public static final String KEY_TASK_QUEUE = "taskQueue";
+    /** 小车阻塞冷却截止时间 key: car:{carId}:blocked_until */
+    public static final String KEY_CAR_BLOCKED_UNTIL = "car:%s:blocked_until";
 
     // ==================== 地图参数默认值 ====================
     public static final int DEFAULT_MAP_WIDTH = 40;
@@ -77,7 +79,7 @@ public final class ConfigConstants {
     public static final int BLOCKED_TIMEOUT_TICKS = 2;   // 受阻超时节拍
 
     // ==================== 节拍参数 ====================
-    public static final int TICK_INTERVAL_MS = 300;
+    public static final int TICK_INTERVAL_MS = 100;
 
     // ==================== 分布式锁参数 ====================
     public static final int LOCK_EXPIRE_SECONDS = 30;
@@ -115,6 +117,10 @@ public final class ConfigConstants {
 
     public static String carBlockedTickKey(String carId) {
         return String.format(KEY_CAR_BLOCKED_TICK, carId);
+    }
+
+    public static String carBlockedUntilKey(String carId) {
+        return String.format(KEY_CAR_BLOCKED_UNTIL, carId);
     }
 
     public static String carQueueName(String carId) {
