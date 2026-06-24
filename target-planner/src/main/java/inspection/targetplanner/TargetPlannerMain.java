@@ -56,6 +56,7 @@ public class TargetPlannerMain {
 
     private BlackboardClient blackboard;
     private MessageBusClient messageBus;
+    private final Random random = new Random();
 
     public static void main(String[] args) throws Exception {
         new TargetPlannerMain().start(args);
@@ -144,21 +145,33 @@ public class TargetPlannerMain {
 
         blackboard.invalidateBitmapCache();
         boolean[][] explored = blackboard.getMapView();
+        boolean[][] obstacles = blackboard.getMapBlocked();
+        boolean[][] unreachable = blackboard.getCarUnreachableBitmap(carId);
 
         // 1. 扫描所有未探索的格子 → 候选池（排除障碍物 + 该车不可达）
-        //    每车独立不可达 bitmap：A 车不可达的格子 B 车仍可尝试
-        //    过滤 isCarUnreachable(carId) 确保该车不会被分配到它已知不可达的目标
+        //    使用本地数组判断替代逐格 Redis GETBIT，40×40 地图从 3200 次降至 3 次 Redis 调用
         List<Point> candidates = new ArrayList<>();
         for (int y = 0; y < h; y++)
             for (int x = 0; x < w; x++)
-                if (!explored[y][x]
-                        && !blackboard.isBlocked(x, y)
-                        && !blackboard.isCarUnreachable(carId, x, y))
+                if (!explored[y][x] && !obstacles[y][x] && !unreachable[y][x])
                     candidates.add(new Point(x, y));
 
         if (candidates.isEmpty()) return null;
 
-        // 2. 排除其他车已分配的目标
+        // 2. BFS 计算从车位置出发的静态可达集合（1 次 flood fill，非逐候选 BFS）
+        Set<Point> reachable = computeReachableSet(carPos, obstacles, w, h);
+
+        // 3. 过滤候选：只保留实际可达的格子（排除曼哈顿近但被障碍物隔离的）
+        List<Point> reachableCandidates = new ArrayList<>();
+        for (Point p : candidates) {
+            if (reachable.contains(p)) reachableCandidates.add(p);
+        }
+        if (reachableCandidates.isEmpty()) {
+            LOG.info("carId={} 候选 {} 个但无一静态可达（可能被障碍物隔离）", carId, candidates.size());
+            return null;  // 触发 Navigator 失败 → 标记不可达 → FIFO 淘汰后续重试
+        }
+
+        // 4. 排除其他车已分配的目标
         Set<Point> claimed = new HashSet<>();
         for (String cid : getAllCarIds())
             if (!cid.equals(carId)) {
@@ -166,22 +179,148 @@ public class TargetPlannerMain {
                 if (t != null) claimed.add(t);
             }
 
-        // 3. 贪心：选距离 ≤ 3 的最近未探索格，其次全局最近
+        // 5. 根据阻塞等级选择策略（方案 C 多策略降级）
+        int blocked = blackboard.getConsecutiveBlocked(carId);
+        return selectByStrategy(reachableCandidates, carPos, claimed, explored, w, h, blocked);
+    }
+
+    /**
+     * 从起点做 BFS flood fill，返回所有静态可达格子集合。
+     * 注意：getMapBlocked() 返回的 bitmap 包含所有车的当前位置（车自己 + 其他车），
+     * 因此起点（车自己站着）在 obstacles 中是 true。BFS 必须把起点视为可通行，
+     * 否则会直接返回空集合导致所有候选都被判为"不可达"。
+     * 邻居扩展仍检查 obstacles，确保不会穿过其他车或静态障碍物。
+     */
+    private Set<Point> computeReachableSet(Point start, boolean[][] obstacles, int w, int h) {
+        Set<Point> reachable = new HashSet<>();
+        if (start == null || obstacles == null) return reachable;
+        if (start.x < 0 || start.x >= w || start.y < 0 || start.y >= h) return reachable;
+        // 不检查 obstacles[start] —— 车自己站的位置必然是 blocked=true（CarAgent.setObstacle），但车确实在那里
+
+        int[][] dirs = {{0, 1}, {0, -1}, {1, 0}, {-1, 0}};
+        Deque<Point> queue = new ArrayDeque<>();
+        queue.add(start);
+        reachable.add(start);
+
+        while (!queue.isEmpty()) {
+            Point cur = queue.poll();
+            for (int[] d : dirs) {
+                int nx = cur.x + d[0];
+                int ny = cur.y + d[1];
+                Point np = new Point(nx, ny);
+                if (nx >= 0 && nx < w && ny >= 0 && ny < h
+                        && !obstacles[ny][nx]
+                        && !reachable.contains(np)) {
+                    reachable.add(np);
+                    queue.add(np);
+                }
+            }
+        }
+        return reachable;
+    }
+
+    /**
+     * 根据连续阻塞次数选择目标选择策略（方案 C 多策略降级）。
+     * 所有策略共用同一个 consecutiveBlocked 计数器（由 Navigator 递增）。
+     */
+    private Point selectByStrategy(List<Point> candidates, Point carPos,
+                                    Set<Point> claimed, boolean[][] explored,
+                                    int w, int h, int blocked) {
+        String mode;
+        if (blocked < 5) mode = "NORMAL";
+        else if (blocked < 10) mode = "CONSERVATIVE";
+        else if (blocked < 15) mode = "EXTENDED";
+        else if (blocked < 20) mode = "REMOTE";
+        else mode = "RESCUE";
+        LOG.info("策略: {} (连续阻塞={})", mode, blocked);
+
+        switch (mode) {
+            case "NORMAL":
+                // 原逻辑：选距离 ≤ 3 的最近，其次全局最近
+                return pickNearest(candidates, carPos, claimed, 0, Integer.MAX_VALUE);
+
+            case "CONSERVATIVE":
+                // 跳过 ≤3 的近距陷阱，选距离 4-10 的最近
+                Point p = pickNearest(candidates, carPos, claimed, 4, 10);
+                return p != null ? p : pickNearest(candidates, carPos, claimed, 0, Integer.MAX_VALUE);
+
+            case "EXTENDED":
+                // 扩展候选到已探索区域的边界格子（绕过障碍物）
+                List<Point> extended = new ArrayList<>(candidates);
+                extended.addAll(collectFrontierEdges(explored, candidates, w, h));
+                return pickNearest(extended, carPos, claimed, 0, Integer.MAX_VALUE);
+
+            case "REMOTE":
+                // 选地图对侧的可达未探索格，强制长距离移动打破局部死锁
+                return pickRemote(candidates, carPos, claimed, w, h);
+
+            case "RESCUE":
+            default:
+                // 随机选一个可达未探索格，打破死锁
+                return pickRandom(candidates, claimed);
+        }
+    }
+
+    /** 选距离在 [minDist, maxDist] 范围内最近的候选 */
+    private Point pickNearest(List<Point> candidates, Point carPos, Set<Point> claimed, int minDist, int maxDist) {
         Point best = null;
         int bestDist = Integer.MAX_VALUE;
         for (Point p : candidates) {
             if (claimed.contains(p)) continue;
             int dist = p.distanceTo(carPos);
-            if (dist <= 3 && dist < bestDist) { bestDist = dist; best = p; }
+            if (dist >= minDist && dist <= maxDist && dist < bestDist) {
+                bestDist = dist;
+                best = p;
+            }
         }
-        if (best == null) {
-            for (Point p : candidates) {
-                if (claimed.contains(p)) continue;
+        return best;
+    }
+
+    /** 收集已探索区域的边界格子（已探索但 4 邻域有未探索候选的格子） */
+    private List<Point> collectFrontierEdges(boolean[][] explored, List<Point> candidates, int w, int h) {
+        List<Point> edges = new ArrayList<>();
+        int[][] dirs = {{0, 1}, {0, -1}, {1, 0}, {-1, 0}};
+        // 用 boolean[][] 替代 HashSet<Point>，避免每次查找 new Point 对象
+        boolean[][] isCandidate = new boolean[h][w];
+        for (Point p : candidates) isCandidate[p.y][p.x] = true;
+        for (int y = 0; y < h; y++)
+            for (int x = 0; x < w; x++)
+                if (explored[y][x]) {
+                    for (int[] d : dirs) {
+                        int nx = x + d[0], ny = y + d[1];
+                        if (nx >= 0 && nx < w && ny >= 0 && ny < h && isCandidate[ny][nx]) {
+                            edges.add(new Point(x, y));
+                            break;
+                        }
+                    }
+                }
+        return edges;
+    }
+
+    /** 选地图对侧的候选（强制长距离移动） */
+    private Point pickRemote(List<Point> candidates, Point carPos, Set<Point> claimed, int w, int h) {
+        int cx = w / 2, cy = h / 2;
+        boolean wantRight = carPos.x < cx;
+        boolean wantBottom = carPos.y < cy;
+        Point best = null;
+        int bestDist = Integer.MAX_VALUE;
+        for (Point p : candidates) {
+            if (claimed.contains(p)) continue;
+            // 对角或对边任一即可（原 && 过于严格，常退化成 pickNearest）
+            if ((p.x >= cx) == wantRight || (p.y >= cy) == wantBottom) {
                 int dist = p.distanceTo(carPos);
                 if (dist < bestDist) { bestDist = dist; best = p; }
             }
         }
-        return best;
+        return best != null ? best : pickNearest(candidates, carPos, claimed, 0, Integer.MAX_VALUE);
+    }
+
+    /** 随机选一个候选 */
+    private Point pickRandom(List<Point> candidates, Set<Point> claimed) {
+        List<Point> avail = new ArrayList<>();
+        for (Point p : candidates) if (!claimed.contains(p)) avail.add(p);
+        if (avail.isEmpty()) return null;
+        return avail.get(random.nextInt(avail.size()));
     }
 
     /** 从 Redis config:task 动态获取所有已知小车 ID */

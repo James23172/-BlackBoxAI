@@ -60,7 +60,9 @@ public class AuthServerMain {
             if (jedis.setnx("auth:migrated", "1") == 1) {
                 jedis.del("auth:user:admin");
             }
-        } catch (Exception ignored) {}
+        } catch (Exception e) {
+            log.warn("auth 迁移检查失败: {}", e.getMessage());
+        }
 
         // 确保默认管理员存在（阻塞重试直到成功，防止 AuthServer 先于 Redis 启动）
         String adminPassword = System.getProperty("auth.admin.password", "admin123");
@@ -345,22 +347,31 @@ public class AuthServerMain {
      * Windows 专用（依赖 netstat + taskkill）。
      */
     private static void killPortOwner(int port) {
+        boolean isWin = System.getProperty("os.name").toLowerCase().contains("win");
         try {
-            Process p = new ProcessBuilder("cmd", "/c",
-                    "netstat -ano | findstr :" + port + " | findstr LISTENING").start();
-            String out = new String(p.getInputStream().readAllBytes());
-            for (String line : out.split("\\r?\\n")) {
-                line = line.trim();
-                if (line.isEmpty()) continue;
-                String[] parts = line.split("\\s+");
-                String pid = parts[parts.length - 1];
-                if (pid.matches("\\d+")) {
-                    log.info("清理端口 {} 残留进程 PID={}", port, pid);
-                    Runtime.getRuntime().exec("taskkill /F /PID " + pid).waitFor();
-                    Thread.sleep(500);
-                    break; // 只杀第一个 LISTENING 的
+            if (isWin) {
+                Process p = new ProcessBuilder("cmd", "/c",
+                        "netstat -ano | findstr :" + port + " | findstr LISTENING").start();
+                String out = new String(p.getInputStream().readAllBytes());
+                for (String line : out.split("\\r?\\n")) {
+                    line = line.trim();
+                    if (line.isEmpty()) continue;
+                    String[] parts = line.split("\\s+");
+                    String pid = parts[parts.length - 1];
+                    if (pid.matches("\\d+")) {
+                        log.info("清理端口 {} 残留进程 PID={}", port, pid);
+                        Runtime.getRuntime().exec("taskkill /F /PID " + pid).waitFor();
+                        Thread.sleep(500);
+                        break;
+                    }
                 }
+            } else {
+                new ProcessBuilder("sh", "-c",
+                        "lsof -ti :" + port + " | xargs kill -9 2>/dev/null").start().waitFor();
+                Thread.sleep(500);
             }
-        } catch (Exception ignored) {}
+        } catch (Exception e) {
+            log.warn("清理端口 {} 失败: {}", port, e.getMessage());
+        }
     }
 }

@@ -520,7 +520,7 @@ function addCar() {
     var used = {}; cars.forEach(function(c){used[c.carId]=true});
     var n = 1; while(used['Car'+String(n).padStart(3,'0')]) n++;
     ws.send(JSON.stringify({type:'ADD_CAR', carId:'Car'+String(n).padStart(3,'0'),
-        x:Math.floor(Math.random()*mapW()-10)+5, y:Math.floor(Math.random()*mapH()-10)+5}));
+        x:(function(){var w=mapW();return w<=10?Math.floor(Math.random()*w):Math.floor(Math.random()*(w-10))+5;})(), y:(function(){var h=mapH();return h<=10?Math.floor(Math.random()*h):Math.floor(Math.random()*(h-10))+5;})()}));
 }
 function addMyCar() {
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
@@ -529,7 +529,7 @@ function addMyCar() {
     var used = {}; cars.forEach(function(c){used[c.carId]=true});
     var n = 1; while(used['Car'+String(n).padStart(3,'0')]) n++;
     ws.send(JSON.stringify({type:'ADD_CAR', carId:'Car'+String(n).padStart(3,'0'),
-        machine: MACHINE_ID, x:Math.floor(Math.random()*mapW()-10)+5, y:Math.floor(Math.random()*mapH()-10)+5}));
+        machine: MACHINE_ID, x:(function(){var w=mapW();return w<=10?Math.floor(Math.random()*w):Math.floor(Math.random()*(w-10))+5;})(), y:(function(){var h=mapH();return h<=10?Math.floor(Math.random()*h):Math.floor(Math.random()*(h-10))+5;})()}));
 }
 function removeCar(id) { if(confirm('确认移除 '+id+'?')) ws.send(JSON.stringify({type:'REMOVE_CAR',carId:id})); }
 function mapW() { return (currentState&&currentState.mapWidth)||parseInt((document.getElementById('mapWidth')||{}).value)||40; }

@@ -78,10 +78,25 @@ public final class ConfigConstants {
     public static final int DEFAULT_MAP_HEIGHT = 40;
     public static final double DEFAULT_OBSTACLE_DENSITY = 0.1;
     public static final int ILLUMINATE_RADIUS = 1;      // 3×3 点亮（架构文档规定）
-    public static final int BLOCKED_TIMEOUT_TICKS = 2;   // 受阻超时节拍
+    /** @deprecated 已替换为 {@link #BLOCKED_TIMEOUT_MS}，统一使用毫秒时间戳 */
+    @Deprecated
+    public static final int BLOCKED_TIMEOUT_TICKS = 2;
+    public static final long BLOCKED_TIMEOUT_MS = 3000;   // 受阻超时毫秒（Navigator 无解后 3 秒再重试）
+
+    // ==================== 寻路与阻塞恢复参数 ====================
+    /** 导航失败时扫描周围区域的半径（实际扫描 (2R+1)×(2R+1) 格） */
+    public static final int NAVIGATE_SCAN_RADIUS = 15;       // 31×31 = 961 格
+    /** 连续阻塞永久放弃阈值（Navigator 与 Controller 必须同步） */
+    public static final int PERMANENT_BLOCK_THRESHOLD = 20;
+    /** 每车不可达标记 FIFO 上限（超过则淘汰最旧的，给瞬时不可达格重试机会） */
+    public static final int UNREACHABLE_MAX_COUNT = 200;
+    /** 不可达标记顺序记录 key: car:{carId}:unreachable_order（Redis List） */
+    public static final String KEY_CAR_UNREACHABLE_ORDER = "car:%s:unreachable_order";
 
     // ==================== 节拍参数 ====================
     public static final int TICK_INTERVAL_MS = 100;
+    /** 系统停滞判定阈值：连续 N tick 状态指纹不变则判定完成（100 tick = 10 秒） */
+    public static final int STAGNANT_TICKS = 100;
 
     // ==================== 分布式锁参数 ====================
     public static final int LOCK_EXPIRE_SECONDS = 30;
@@ -127,6 +142,10 @@ public final class ConfigConstants {
 
     public static String carUnreachableKey(String carId) {
         return String.format(KEY_CAR_UNREACHABLE, carId);
+    }
+
+    public static String carUnreachableOrderKey(String carId) {
+        return String.format(KEY_CAR_UNREACHABLE_ORDER, carId);
     }
 
     public static String carQueueName(String carId) {

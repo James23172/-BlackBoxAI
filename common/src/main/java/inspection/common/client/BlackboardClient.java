@@ -222,15 +222,30 @@ public class BlackboardClient {
             }
             readPipe.sync();  // 1 次往返完成 9 个 GETBIT
 
-            // 第二阶段：Pipeline 批量 SETBIT 只写非障碍物格子
+            // 第二阶段：Pipeline 批量 SETBIT 只写非障碍物格子，对角线格子增加墙角遮挡检查
             var writePipe = jedis.pipelined();
             for (int i = 0; i < cells.size(); i++) {
                 boolean blocked = blockedChecks.get(i).get();
-                if (!blocked) {
-                    int[] c = cells.get(i);
-                    writePipe.setbit(ConfigConstants.KEY_MAP_VIEW, bitmapOffset(c[0], c[1]), true);
-                    writePipe.srem(ConfigConstants.KEY_UNEXPLORED_SET, c[0] + "," + c[1]);
+                if (blocked) continue;
+
+                int[] c = cells.get(i);
+                int dx = c[0] - cx;
+                int dy = c[1] - cy;
+
+                // 对角线格子：检查两个正交邻居是否都是障碍物（墙角遮挡）
+                if (dx != 0 && dy != 0) {
+                    boolean neighbor1Blocked = true;  // (cx+dx, cy)
+                    boolean neighbor2Blocked = true;  // (cx, cy+dy)
+                    for (int j = 0; j < cells.size(); j++) {
+                        int[] nc = cells.get(j);
+                        if (nc[0] == cx + dx && nc[1] == cy) neighbor1Blocked = blockedChecks.get(j).get();
+                        if (nc[0] == cx && nc[1] == cy + dy) neighbor2Blocked = blockedChecks.get(j).get();
+                    }
+                    if (neighbor1Blocked && neighbor2Blocked) continue;  // 墙角遮挡，不点亮
                 }
+
+                writePipe.setbit(ConfigConstants.KEY_MAP_VIEW, bitmapOffset(c[0], c[1]), true);
+                writePipe.srem(ConfigConstants.KEY_UNEXPLORED_SET, c[0] + "," + c[1]);
             }
             writePipe.incr(ConfigConstants.KEY_MAP_VIEW_VERSION);
             writePipe.sync();  // 1 次往返完成 SETBIT
@@ -255,7 +270,26 @@ public class BlackboardClient {
     public void setCarUnreachable(String carId, int x, int y) {
         refreshMapConfig();
         try (Jedis jedis = pool.getResource()) {
-            jedis.setbit(ConfigConstants.carUnreachableKey(carId), bitmapOffset(x, y), true);
+            String bitmapKey = ConfigConstants.carUnreachableKey(carId);
+            String orderKey = ConfigConstants.carUnreachableOrderKey(carId);
+            // 1. 先检查是否已标记（避免重复入队导致 FIFO list 膨胀）
+            boolean already = jedis.getbit(bitmapKey, bitmapOffset(x, y));
+            if (already) return;
+            // 2. 标记 bitmap
+            jedis.setbit(bitmapKey, bitmapOffset(x, y), true);
+            // 3. 入队 FIFO 顺序记录
+            jedis.rpush(orderKey, x + "," + y);
+            // 4. 超上限则淘汰最旧的（FIFO），给瞬时不可达格重试机会
+            long len = jedis.llen(orderKey);
+            if (len > ConfigConstants.UNREACHABLE_MAX_COUNT) {
+                String oldest = jedis.lpop(orderKey);
+                if (oldest != null) {
+                    String[] parts = oldest.split(",");
+                    int ox = Integer.parseInt(parts[0]);
+                    int oy = Integer.parseInt(parts[1]);
+                    jedis.setbit(bitmapKey, bitmapOffset(ox, oy), false);
+                }
+            }
         }
     }
 
@@ -267,17 +301,13 @@ public class BlackboardClient {
         }
     }
 
-    /** 读取指定小车的不可达 bitmap，不存在时返回全 false */
+    /** 读取指定小车的不可达 bitmap（批量 GET + 本地解码，1 次 Redis 往返） */
     public boolean[][] getCarUnreachableBitmap(String carId) {
         refreshMapConfig();
         try (Jedis jedis = pool.getResource()) {
-            String key = ConfigConstants.carUnreachableKey(carId);
-            if (!jedis.exists(key)) return new boolean[mapHeight][mapWidth];
-            boolean[][] bitmap = new boolean[mapHeight][mapWidth];
-            for (int y = 0; y < mapHeight; y++)
-                for (int x = 0; x < mapWidth; x++)
-                    bitmap[y][x] = jedis.getbit(key, bitmapOffset(x, y));
-            return bitmap;
+            byte[] data = jedis.get(ConfigConstants.carUnreachableKey(carId).getBytes());
+            if (data == null || data.length == 0) return new boolean[mapHeight][mapWidth];
+            return decodeBitmap(data, mapWidth, mapHeight);
         }
     }
 
@@ -514,6 +544,33 @@ public class BlackboardClient {
         return getBlockedTick(carId);
     }
 
+    private static final String CONSECUTIVE_BLOCKED_SUFFIX = ":consecutive_blocked";
+
+    /** 递增连续阻塞计数，返回新值。key 设置 10 分钟 TTL 防止永久残留 */
+    public int incrConsecutiveBlocked(String carId) {
+        try (Jedis jedis = pool.getResource()) {
+            String key = "car:" + carId + CONSECUTIVE_BLOCKED_SUFFIX;
+            long val = jedis.incr(key);
+            jedis.expire(key, 600);
+            return (int) val;
+        }
+    }
+
+    /** 重置连续阻塞计数 */
+    public void resetConsecutiveBlocked(String carId) {
+        try (Jedis jedis = pool.getResource()) {
+            jedis.del("car:" + carId + CONSECUTIVE_BLOCKED_SUFFIX);
+        }
+    }
+
+    /** 获取连续阻塞计数 */
+    public int getConsecutiveBlocked(String carId) {
+        try (Jedis jedis = pool.getResource()) {
+            String v = jedis.get("car:" + carId + CONSECUTIVE_BLOCKED_SUFFIX);
+            return v == null ? 0 : Integer.parseInt(v);
+        }
+    }
+
     // ==================== 全局配置 ====================
 
     public Map<String, String> getTaskConfig() {
@@ -524,8 +581,14 @@ public class BlackboardClient {
 
     public void setTaskConfig(Map<String, String> config) {
         try (Jedis jedis = pool.getResource()) {
-            for (Map.Entry<String, String> entry : config.entrySet()) {
-                jedis.hset(ConfigConstants.KEY_TASK_CONFIG, entry.getKey(), entry.getValue());
+            jedis.del(ConfigConstants.KEY_TASK_CONFIG);
+            if (!config.isEmpty()) {
+                // 用 pipeline 逐字段 hset，兼容所有 Jedis/Redis 版本（避免 hset(key, Map) 兼容性问题）
+                var pipeline = jedis.pipelined();
+                for (Map.Entry<String, String> entry : config.entrySet()) {
+                    pipeline.hset(ConfigConstants.KEY_TASK_CONFIG, entry.getKey(), entry.getValue());
+                }
+                pipeline.sync();
             }
         }
     }
@@ -729,6 +792,10 @@ public class BlackboardClient {
         return new DistributedLock(pool, ConfigConstants.carLockKey(carId));
     }
 
+    public DistributedLock getCellLock(int x, int y) {
+        return new DistributedLock(pool, "lock:cell:" + x + ":" + y);
+    }
+
     public DistributedLock getControllerLock() {
         return new DistributedLock(pool, ConfigConstants.KEY_LOCK_CONTROLLER);
     }
@@ -793,6 +860,18 @@ public class BlackboardClient {
         }
     }
 
+    /** 巡检完成时调用：将 unexplored:set 剩余格子标记为不可达残区，然后清空 set */
+    public int markUnreachableResidual() {
+        try (Jedis jedis = pool.getResource()) {
+            Set<String> residual = jedis.smembers(ConfigConstants.KEY_UNEXPLORED_SET);
+            if (residual.isEmpty()) return 0;
+            // 写入不可达残区集合（供前端/回放用不同色渲染）
+            jedis.sadd("map:unreachable:residual", residual.toArray(new String[0]));
+            jedis.del(ConfigConstants.KEY_UNEXPLORED_SET);
+            return residual.size();
+        }
+    }
+
     // ==================== 管理 ====================
 
     /** 仅 TaskConfigurator 调用：清空所有数据 */
@@ -802,7 +881,13 @@ public class BlackboardClient {
                     "replay:*", "pause:*" };
             Set<String> toDelete = new HashSet<>();
             for (String pattern : patterns) {
-                toDelete.addAll(jedis.keys(pattern));
+                String cursor = "0";
+                do {
+                    var scanResult = jedis.scan(cursor, new redis.clients.jedis.params.ScanParams()
+                            .match(pattern).count(100));
+                    toDelete.addAll(scanResult.getResult());
+                    cursor = scanResult.getCursor();
+                } while (!cursor.equals("0"));
             }
             if (!toDelete.isEmpty()) {
                 jedis.del(toDelete.toArray(new String[0]));

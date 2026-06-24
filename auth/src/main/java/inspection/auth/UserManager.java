@@ -44,7 +44,15 @@ public class UserManager {
     public java.util.List<User> listAll() {
         java.util.List<User> result = new java.util.ArrayList<>();
         try (Jedis jedis = pool.getResource()) {
-            for (String key : jedis.keys(KEY_PREFIX + "*")) {
+            java.util.List<String> keys = new java.util.ArrayList<>();
+            String cursor = "0";
+            do {
+                var scanResult = jedis.scan(cursor, new redis.clients.jedis.params.ScanParams()
+                        .match(KEY_PREFIX + "*").count(100));
+                keys.addAll(scanResult.getResult());
+                cursor = scanResult.getCursor();
+            } while (!cursor.equals("0"));
+            for (String key : keys) {
                 String json = jedis.get(key);
                 if (json != null) {
                     result.add(JSON.parseObject(json, User.class));

@@ -146,7 +146,7 @@ public class TaskConfiguratorMain {
         Map<String, String> existingConfig = blackboard.getTaskConfig();
         if (!forceReset && existingConfig != null && !existingConfig.isEmpty()) {
             LOG.info("检测到已有配置 (forceReset=false)，跳过全量初始化，复用现有状态");
-            try { blackboard.getJedis().bgsave(); } catch (Exception e) { /* ignore */ }
+            try (redis.clients.jedis.Jedis j = blackboard.getJedis()) { j.bgsave(); } catch (Exception e) { LOG.debug("BGSAVE 触发失败: {}", e.getMessage()); }
             return;
         }
 
@@ -227,7 +227,7 @@ public class TaskConfiguratorMain {
                 mapWidth, mapHeight, carCount, obstacleCount, carIds.size());
 
         // 触发 Redis 持久化快照（用于崩溃恢复）
-        try { blackboard.getJedis().bgsave(); } catch (Exception e) { /* ignore */ }
+        try (redis.clients.jedis.Jedis j = blackboard.getJedis()) { j.bgsave(); } catch (Exception e) { LOG.debug("BGSAVE 触发失败: {}", e.getMessage()); }
     }
 
     /**

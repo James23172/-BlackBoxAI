@@ -139,7 +139,8 @@ public class CommandReceiver extends WebSocketServer {
                     handlePause(json, state);
                     break;
                 case "GET_SNAPSHOT":
-                    conn.send("{\"type\":\"ERROR\",\"message\":\"Replay not supported\"}");
+                    // 前端已直接 HTTP 访问 ReplayServer，此命令已废弃
+                    LOG.warn("GET_SNAPSHOT 命令已废弃，前端应直接请求 ReplayServer");
                     break;
                 case "ROUTE_DISPLAY":
                     handleRouteDisplay(conn, json);
@@ -248,8 +249,8 @@ public class CommandReceiver extends WebSocketServer {
 
     private void handleAddCar(JSONObject json, ConnState state) {
         String carId = json.getString("carId");
-        int x = json.getIntValue("x", 15);
-        int y = json.getIntValue("y", 15);
+        int x = json.getIntValue("x", Math.max(15, blackboard.getMapWidth() / 2));
+        int y = json.getIntValue("y", Math.max(15, blackboard.getMapHeight() / 2));
 
         // 限制小车总数不超过 4 辆
         List<String> existingCars = blackboard.getAllCarIds();

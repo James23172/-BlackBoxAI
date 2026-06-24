@@ -174,6 +174,7 @@ public class NavigatorMain {
         blackboard.clearRoute(carId);
         blackboard.pushRoute(carId, path);
         blackboard.setCarStatus(carId, CarStatus.IDLE);
+        blackboard.resetConsecutiveBlocked(carId);  // 规划成功 → 重置连续阻塞计数
         blackboard.pushTask("MOVE_READY", carId, null);
         LOG.info("📤 [Navigator] pushTask(MOVE_READY) → Redis taskQueue, carId={}", carId);
     }
@@ -200,8 +201,14 @@ public class NavigatorMain {
         int w = blackboard.getMapWidth();
         int h = blackboard.getMapHeight();
 
-        // 扫描周围 5×5 区域，检查是否有该车可达的未探索格子
-        int scanRadius = 5;
+        // 批量获取 bitmap（3 次 Redis 调用替代逐格 GETBIT，避免 scanRadius 扩大后 2883 次往返）
+        blackboard.invalidateBitmapCache();
+        boolean[][] obstacles = blackboard.getMapBlocked();
+        boolean[][] explored = blackboard.getMapView();
+        boolean[][] unreachableMap = blackboard.getCarUnreachableBitmap(carId);
+
+        // 扫描周围区域，检查是否有该车可达的未探索格子（纯内存遍历）
+        int scanRadius = ConfigConstants.NAVIGATE_SCAN_RADIUS;  // 15 → 31×31 = 961 格
         boolean hasReachableUnexplored = false;
         if (carPos != null) {
             for (int dy = -scanRadius; dy <= scanRadius && !hasReachableUnexplored; dy++) {
@@ -209,27 +216,33 @@ public class NavigatorMain {
                     int nx = carPos.x + dx;
                     int ny = carPos.y + dy;
                     if (nx >= 0 && nx < w && ny >= 0 && ny < h
-                            && !blackboard.isBlocked(nx, ny)
-                            && !blackboard.isExplored(nx, ny)
-                            && !blackboard.isCarUnreachable(carId, nx, ny)) {
+                            && !obstacles[ny][nx]
+                            && !explored[ny][nx]
+                            && !unreachableMap[ny][nx]) {
                         hasReachableUnexplored = true;
                     }
                 }
             }
         }
 
-        try { blackboard.clearCarTarget(carId); } catch (Exception e) { /* ignore */ }
+        try { blackboard.clearCarTarget(carId); } catch (Exception e) { LOG.debug("清除目标失败: {}", e.getMessage()); }
 
         if (!hasReachableUnexplored) {
             // 真的无解 → 进入 BLOCKED，不再推送 ROUTE_NEEDED
             blackboard.setCarStatus(carId, CarStatus.BLOCKED);
-            LOG.info("导航失败且周围无可达未探索区域: carId={}, 进入 BLOCKED", carId);
+            blackboard.setBlockedTick(carId, System.currentTimeMillis());
+            int consecutive = blackboard.incrConsecutiveBlocked(carId);
+            LOG.info("导航失败且周围无可达未探索区域: carId={}, 进入 BLOCKED, 连续阻塞次数={}", carId, consecutive);
+            if (consecutive >= ConfigConstants.PERMANENT_BLOCK_THRESHOLD) {
+                LOG.error("小车 {} 永久阻塞（连续 {} 次无解），需人工干预", carId, consecutive);
+            }
         } else {
-            // 还有可达区域 → 冷却 3 秒后重试，避免紧密循环
+            // 还有可达区域 → 冷却 3 秒后重试，避免紧密循环（仍计为失败，递增计数器）
+            int consecutive = blackboard.incrConsecutiveBlocked(carId);
             blackboard.setCarStatus(carId, CarStatus.IDLE);
             blackboard.setCarBlockedUntil(carId, System.currentTimeMillis() + 3000);
             blackboard.pushTask("ROUTE_NEEDED", carId, null);
-            LOG.info("导航失败但周围有未探索区域: carId={}, 3 秒后重试", carId);
+            LOG.info("导航失败但周围有未探索区域: carId={}, 3 秒后重试, 连续阻塞次数={}", carId, consecutive);
         }
     }
 }

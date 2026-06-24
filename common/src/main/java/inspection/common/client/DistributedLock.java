@@ -30,7 +30,7 @@ public class DistributedLock {
     public DistributedLock(JedisPool pool, String lockKey) {
         this.pool = pool;
         this.lockKey = lockKey;
-        this.lockValue = String.valueOf(Thread.currentThread().getId());
+        this.lockValue = java.util.UUID.randomUUID().toString() + ":" + Thread.currentThread().getId();
     }
 
     /**

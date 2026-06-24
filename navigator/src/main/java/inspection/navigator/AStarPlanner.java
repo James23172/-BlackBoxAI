@@ -5,6 +5,7 @@ import java.util.*;
 
 public class AStarPlanner implements PathPlanner {
     private static final int[][] DIRS = {{0,1},{1,0},{0,-1},{-1,0}};
+    private static final int EXPLORED_COST = 2;  // 已探索格子的移动成本（未探索=1）
 
     @Override
     public List<Point> plan(Point start, Point target, boolean[][] obstacles, boolean[][] explored, int w, int h) {
@@ -33,7 +34,8 @@ public class AStarPlanner implements PathPlanner {
                 int nx = cur.p.x + d[0], ny = cur.p.y + d[1];
                 if (nx < 0 || nx >= w || ny < 0 || ny >= h) continue;
                 if (obstacles[ny][nx]) continue;
-                int ng = gScore[cur.p.y][cur.p.x] + 1;
+                int stepCost = explored[ny][nx] ? EXPLORED_COST : 1;
+                int ng = gScore[cur.p.y][cur.p.x] + stepCost;
                 if (ng < gScore[ny][nx]) {
                     gScore[ny][nx] = ng;
                     cameFrom[ny][nx] = cur.p;

@@ -45,6 +45,10 @@ public class ControllerAgent {
     private volatile boolean userActivated = false;
     private Thread taskProcessor;
     private long tickCount = 0;
+    private int stagnantTicks = 0;              // 层 1-C: 连续停滞 tick 计数
+    private String lastStagnantFp = null;       // 停滞检测用：上一 tick 指纹
+    private String lastSnapshotFp = null;       // 录制去重用：上一已录帧指纹
+    private boolean taskCompleted = false;      // 巡检完成标志（供快照 completed 字段使用）
 
     public ControllerAgent(BlackboardClient bb, MessageBusClient mq) {
         this(bb, mq, 0, 1);
@@ -108,7 +112,7 @@ public class ControllerAgent {
                                 log.info("🔓 检测到 Redis taskActive=true, 激活任务处理器");
                                 taskActive = true;
                             }
-                        } catch (Exception e) { /* ignore, will retry next cycle */ }
+                        } catch (Exception e) { log.debug("检查 Redis taskActive 失败，下个周期重试: {}", e.getMessage()); }
                     }
                     continue;
                 }
@@ -224,7 +228,11 @@ public class ControllerAgent {
     private void handleStartTask() {
         // 检查 Redis 中是否已有任务配置（而非靠 queueLen 计数，因为 START 本身刚被出队）
         Map<String, String> existingConfig = bb.getTaskConfig();
-        boolean hasConfig = existingConfig != null && !existingConfig.isEmpty();
+        boolean hasConfig = existingConfig != null
+                && existingConfig.containsKey("mapWidth")
+                && existingConfig.containsKey("mapHeight")
+                && existingConfig.containsKey("cars")
+                && existingConfig.containsKey("taskActive");
         log.info("🚀 Start: hasConfig={}, redisTaskActive={}, 当前taskActive={}",
                 hasConfig, bb.isTaskActive(), taskActive);
         if (!hasConfig) {
@@ -237,6 +245,7 @@ public class ControllerAgent {
             initData.put("carCount", Math.max(4, bb.getAllCarIds().size()));
             initData.put("obstacleDensity", ConfigConstants.DEFAULT_OBSTACLE_DENSITY);
             initData.put("routeAlgorithm", bb.getRouteAlgorithm());
+            initData.put("forceReset", true);  // 配置不完整时必须强制重建，避免残留 key 导致 TaskConfigurator 跳过
             initData.put("active", true);
             taskActive = false;
             sendCommand(CommandType.FORWARD_CONFIG, initData, ConfigConstants.QUEUE_TASK_CONFIG_CMD);
@@ -249,6 +258,10 @@ public class ControllerAgent {
         }
         // 自动开始录制快照（回放功能需要）
         recording = true;
+        stagnantTicks = 0;       // 重置停滞检测
+        lastStagnantFp = null;   // 重置停滞指纹
+        lastSnapshotFp = null;   // 重置录制指纹（强制下一帧录制）
+        taskCompleted = false;   // 重置完成标志
         log.info("⏺ 自动开始录制快照");
     }
 
@@ -269,6 +282,7 @@ public class ControllerAgent {
                 String.valueOf(Math.max(4, bb.getAllCarIds().size())))));
         data.put("obstacleDensity", Double.parseDouble(task.getOrDefault("obstacleDensity", String.valueOf(ConfigConstants.DEFAULT_OBSTACLE_DENSITY))));
         data.put("routeAlgorithm", task.getOrDefault("routeAlgorithm", "BFS"));
+        data.put("forceReset", true);  // SET_CONFIG 必须重建地图，否则 TaskConfigurator 会因已有配置而跳过
         data.put("active", false);
         log.info("📋 SET_CONFIG → 转发到 TaskConfigurator: {}x{}, carCount={}",
                 data.get("mapWidth"), data.get("mapHeight"), data.get("carCount"));
@@ -292,8 +306,9 @@ public class ControllerAgent {
         taskActive = false;
         // 停止录制并清除旧快照（重置后旧数据无效）
         recording = false;
-        try { try (redis.clients.jedis.Jedis j = bb.getJedis()) { j.del("replay:snapshots"); } } catch (Exception e) { /* ignore */ }
+        try { try (redis.clients.jedis.Jedis j = bb.getJedis()) { j.del("replay:snapshots"); } } catch (Exception e) { log.debug("清除回放快照失败: {}", e.getMessage()); }
         tickCount = 0;
+        taskCompleted = false;
         bb.clearTaskQueue();
         sendCommand(CommandType.FORWARD_CONFIG, data, ConfigConstants.QUEUE_TASK_CONFIG_CMD);
     }
@@ -305,27 +320,43 @@ public class ControllerAgent {
 
         try {
             if (taskActive) {
-                // 双保险判定：unexplored:set 为空 且 bitmap 探索率 ≥ 99.9%
-                // 防止 Redis 重启导致 unexplored:set 丢失而误判完成
                 long unexploredCount = getUnexploredCount();
                 double explored = getExploredPercent();
+
+                // 条件 A: 理想全探索（原双保险判定）
                 if (unexploredCount == 0 && explored >= 99.9) {
-                    log.info("🏁 巡检完成！未探索格子=0, 探索率={}%", explored);
-                    taskActive = false;
-                    bb.setTaskActive(false);
-                    recording = false;  // 探索完成，自动停止录制
-                    log.info("⏹ 探索完成，自动停止录制");
-                    wakeTaskProcessor();
+                    completeTask("A(理想全探索)", unexploredCount, explored);
+                    return;
                 }
+
+                // 条件 B: 全车永久阻塞 — 所有车 consecutiveBlocked >= 阈值
+                if (isAllCarsPermanentlyBlocked()) {
+                    completeTask("B(全车永久阻塞)", unexploredCount, explored);
+                    return;
+                }
+
                 fallbackBlockedCheck();
                 // 每 tick 主动推进所有 IDLE 且有路径的小车（每个 tick 最多 1 步）
-                // 全局暂停时跳过 tickDrive，但仍继续广播（让 Display 看到暂停状态）
                 if (!bb.isGlobalPaused()) {
                     tickDriveCars();
                 }
+
+                // 条件 C: 持续停滞 — 连续 STAGNANT_TICKS 状态指纹不变
+                String fp = computeFingerprint();
+                if (fp.equals(lastStagnantFp)) {
+                    stagnantTicks++;
+                } else {
+                    stagnantTicks = 0;
+                    lastStagnantFp = fp;
+                }
+                if (stagnantTicks >= ConfigConstants.STAGNANT_TICKS) {
+                    completeTask("C(持续停滞" + stagnantTicks + "tick)", unexploredCount, explored);
+                    return;
+                }
+
                 tickCount++;
-                // 快照录制（用于回放）
-                saveSnapshotIfRecording();
+                // 快照录制（用于回放）— 传入指纹用于去重
+                saveSnapshotIfRecording(fp);
                 if (tickCount % 20 == 0) {
                     log.info("节拍 #{} 完成，未探索剩余: {}, 探索率: {}%", tickCount, unexploredCount, explored);
                 }
@@ -336,14 +367,54 @@ public class ControllerAgent {
         }
     }
 
+    /** 检查所有车是否都已永久阻塞（consecutiveBlocked >= PERMANENT_BLOCK_THRESHOLD） */
+    private boolean isAllCarsPermanentlyBlocked() {
+        List<String> carIds = getAllCarIds();
+        if (carIds.isEmpty()) return false;
+        for (String carId : carIds) {
+            try {
+                // 不再要求 status==BLOCKED：连续失败 20 次即为永久阻塞
+                // 无论当前是 BLOCKED（分支1）还是 IDLE（分支2冷却重试中）
+                if (bb.getConsecutiveBlocked(carId) < ConfigConstants.PERMANENT_BLOCK_THRESHOLD) return false;
+            } catch (Exception e) {
+                return false; // 读取失败时不判定为全阻塞
+            }
+        }
+        return true;
+    }
+
+    /** 巡检完成处理：停止任务、停止录制、标记不可达残区 */
+    private void completeTask(String reason, long unexploredCount, double explored) {
+        // 层 3: 标记不可达残区（unexplored:set 剩余格子 = 不可达区域）
+        int unreachableCount = 0;
+        try { unreachableCount = bb.markUnreachableResidual(); } catch (Exception e) { log.warn("标记不可达残区失败", e); }
+        log.info("🏁 巡检完成！触发条件={}, 探索率={}%, 未探索={}, 不可达残区={}",
+                reason, String.format("%.1f", explored), unexploredCount, unreachableCount);
+        taskActive = false;
+        bb.setTaskActive(false);
+        recording = false;
+        stagnantTicks = 0;
+        lastStagnantFp = null;
+        lastSnapshotFp = null;
+        taskCompleted = true;
+        log.info("⏹ 探索完成，自动停止录制");
+        wakeTaskProcessor();
+    }
+
     // ==================== 超时和辅助 ====================
 
     private void handleBlockedTimeout(String carId) {
-        long blockedTick;
-        try { blockedTick = bb.getCarBlockedTick(carId); } catch (Exception e) { blockedTick = 0; }
-        long diff = tickCount - blockedTick;
-        if (diff >= ConfigConstants.BLOCKED_TIMEOUT_TICKS) {
-            log.info("小车 {} 已阻塞 {} 个节拍，清空路径/目标，转为 IDLE", carId, diff);
+        long blockedAt;
+        try { blockedAt = bb.getCarBlockedTick(carId); } catch (Exception e) { blockedAt = 0; }
+        long elapsed = System.currentTimeMillis() - blockedAt;
+        if (elapsed >= ConfigConstants.BLOCKED_TIMEOUT_MS) {
+            // 检查连续阻塞次数，超过阈值不再自动恢复
+            int consecutive = bb.getConsecutiveBlocked(carId);
+            if (consecutive >= ConfigConstants.PERMANENT_BLOCK_THRESHOLD) {
+                log.warn("小车 {} 已连续阻塞 {} 次，跳过自动恢复，需人工干预", carId, consecutive);
+                return;
+            }
+            log.info("小车 {} 已阻塞 {}ms，清空路径/目标，转为 IDLE", carId, elapsed);
             DistributedLock lock = bb.getCarLock(carId);
             if (!lock.tryLock()) {
                 log.warn("获取小车 {} 锁失败，延迟处理", carId);
@@ -453,8 +524,34 @@ public class ControllerAgent {
 
     public void setRecording(boolean r) { this.recording = r; }
 
-    private void saveSnapshotIfRecording() {
+    /** 计算当前状态指纹：mapView 位图 + 各车位置/状态/连续阻塞数。用于录制去重和停滞检测。 */
+    private String computeFingerprint() {
+        try {
+            var map = bb.getMapView();
+            int w = bb.getMapWidth(), h = bb.getMapHeight();
+            var sb = new StringBuilder(w * h + 64);
+            for (int y = 0; y < h; y++)
+                for (int x = 0; x < w; x++)
+                    sb.append(map[y][x] ? '1' : '0');
+            sb.append('|');
+            for (String id : getAllCarIds()) {
+                var p = bb.getCarPosition(id);
+                sb.append(id).append(':')
+                  .append(bb.getCarStatus(id).name()).append(':')
+                  .append(p != null ? p.x + "," + p.y : "null").append(':')
+                  .append(bb.getConsecutiveBlocked(id)).append(';');
+            }
+            return sb.toString();
+        } catch (Exception e) {
+            return String.valueOf(System.currentTimeMillis()); // 出错时退化为不重复
+        }
+    }
+
+    private void saveSnapshotIfRecording(String fingerprint) {
         if (!recording) return;
+        // 层 2: 状态指纹去重 — 相同帧跳过录制，避免回放数据被重复帧撑爆
+        if (fingerprint.equals(lastSnapshotFp)) return;
+        lastSnapshotFp = fingerprint;
         try {
             com.alibaba.fastjson2.JSONObject snap = new com.alibaba.fastjson2.JSONObject();
             snap.put("tick", tickCount);
@@ -496,13 +593,12 @@ public class ControllerAgent {
             // 全局暂停状态
             snap.put("globalPaused", bb.isGlobalPaused());
             // 探索完成状态
-            long unexploredCount = getUnexploredCount();
-            double explored = getExploredPercent();
-            snap.put("completed", unexploredCount == 0 && explored >= 99.9);
+            snap.put("completed", taskCompleted);
             try (redis.clients.jedis.Jedis j = bb.getJedis()) {
                 j.rpush("replay:snapshots", snap.toJSONString());
+                j.ltrim("replay:snapshots", -12000, -1);  // 保留最近 12000 个快照（约 20 分钟，TICK_INTERVAL_MS=100ms）
             }
-        } catch (Exception e) { /* 录制失败不影响主流程 */ }
+        } catch (Exception e) { log.debug("快照录制失败: {}", e.getMessage()); }
     }
 
     // ==================== 查询辅助 ====================

@@ -48,7 +48,9 @@ public class Launcher {
                 }
                 dir = dir.getParentFile();
             }
-        } catch (Exception ignored) {}
+        } catch (Exception e) {
+            System.err.println("detectProjectRoot 失败: " + e.getMessage());
+        }
         return new File(System.getProperty("user.dir"));
     }
 
@@ -148,26 +150,13 @@ public class Launcher {
     // ==================== 自动编译 ====================
 
     private static boolean autoCompile() {
-        // 检查所有模块是否已编译（而非仅 common 模块）
-        File pomFile = new File(PROJECT_ROOT, "pom.xml");
-        String[] modules = {"common", "auth", "replay", "controller", "car", "navigator", "target-planner", "task-configurator", "display"};
-        boolean allCompiled = true;
-        for (String m : modules) {
-            File classesDir = new File(PROJECT_ROOT, m + "\\target\\classes");
-            if (!classesDir.exists() || classesDir.lastModified() < pomFile.lastModified()) {
-                allCompiled = false;
-                break;
-            }
-        }
-        if (allCompiled) {
-            System.out.println("📦 所有模块已有编译产物，跳过编译");
-            return true;
-        }
-
-        System.out.println("📦 正在编译项目 (mvn compile -q)...");
+        // 始终走 Maven 增量编译：Maven 自身只重编变更文件，秒级完成
+        // 不再跳过——避免 IDEA(ECJ) 错误桩蒙混过关导致运行时 java.lang.Error
+        System.out.println("📦 正在编译项目 (mvn compile)...");
         try {
+            String mvnCmd = System.getProperty("os.name", "").toLowerCase().contains("win") ? "mvn.cmd" : "mvn";
             ProcessBuilder pb = new ProcessBuilder(
-                    "mvn", "compile", "-q", "-Dorg.slf4j.simpleLogger.log.org.apache.maven.plugins=error"
+                    mvnCmd, "compile", "-q", "-Dorg.slf4j.simpleLogger.log.org.apache.maven.plugins=error"
             );
             pb.directory(PROJECT_ROOT);
             pb.redirectErrorStream(true);
@@ -275,7 +264,9 @@ public class Launcher {
                 while ((line = reader.readLine()) != null) {
                     System.out.println("[" + label + "] " + line);
                 }
-            } catch (IOException ignored) {}
+            } catch (IOException e) {
+                System.err.println("[" + label + "-stdout] 日志读取线程异常终止: " + e.getMessage());
+            }
         }, label + "-stdout").start();
 
         new Thread(() -> {
@@ -286,7 +277,9 @@ public class Launcher {
                 while ((line = reader.readLine()) != null) {
                     System.err.println("[" + label + " ERR] " + line);
                 }
-            } catch (IOException ignored) {}
+            } catch (IOException e) {
+                System.err.println("[" + label + "-stderr] 日志读取线程异常终止: " + e.getMessage());
+            }
         }, label + "-stderr").start();
     }
 
@@ -326,8 +319,10 @@ public class Launcher {
             // 用临时文件接收 classpath（兼容 Windows 无 /dev/stdout）
             File tmpFile = File.createTempFile("mvn-cp-", ".txt");
             tmpFile.deleteOnExit();
+            // Windows 上 ProcessBuilder 不自动查找 .cmd 扩展名，需显式指定
+            String mvnCmd = System.getProperty("os.name", "").toLowerCase().contains("win") ? "mvn.cmd" : "mvn";
             ProcessBuilder pb = new ProcessBuilder(
-                    "mvn", "dependency:build-classpath",
+                    mvnCmd, "dependency:build-classpath",
                     "-pl", module,
                     "-DincludeScope=runtime",
                     "-Dmdep.outputFile=" + tmpFile.getAbsolutePath(),
@@ -342,7 +337,9 @@ public class Launcher {
                 String cp = new String(java.nio.file.Files.readAllBytes(tmpFile.toPath())).trim();
                 if (!cp.isEmpty()) return cp;
             }
-        } catch (Exception ignored) {}
+        } catch (Exception e) {
+            System.err.println("tryMvnClasspath 失败: " + e.getMessage());
+        }
         return null;
     }
 
@@ -440,21 +437,30 @@ public class Launcher {
 
     /** 清理上次残留的端口占用 (AuthServer:8890, ReplayServer:8893, Display HTTP:8888, WebSocket:8887) */
     private static void cleanupReservedPorts() {
+        boolean isWin = System.getProperty("os.name").toLowerCase().contains("win");
         for (int port : new int[]{8890, 8893, 8888, 8887}) {
             try {
-                Process p = new ProcessBuilder("cmd", "/c",
-                        "netstat -ano | findstr :" + port).start();
-                String out = new String(p.getInputStream().readAllBytes());
-                for (String line : out.split("\n")) {
-                    if (line.contains("LISTENING")) {
-                        String pid = line.trim().replaceAll(".*\\s+(\\d+)$", "$1");
-                        new ProcessBuilder("taskkill", "/F", "/PID", pid)
-                                .redirectError(ProcessBuilder.Redirect.DISCARD)
-                                .redirectOutput(ProcessBuilder.Redirect.DISCARD)
-                                .start().waitFor();
+                if (isWin) {
+                    Process p = new ProcessBuilder("cmd", "/c",
+                            "netstat -ano | findstr :" + port).start();
+                    String out = new String(p.getInputStream().readAllBytes());
+                    for (String line : out.split("\n")) {
+                        if (line.contains("LISTENING")) {
+                            String pid = line.trim().replaceAll(".*\\s+(\\d+)$", "$1");
+                            new ProcessBuilder("taskkill", "/F", "/PID", pid)
+                                    .redirectError(ProcessBuilder.Redirect.DISCARD)
+                                    .redirectOutput(ProcessBuilder.Redirect.DISCARD)
+                                    .start().waitFor();
+                        }
                     }
+                } else {
+                    new ProcessBuilder("sh", "-c",
+                            "lsof -ti :" + port + " | xargs kill -9 2>/dev/null").start().waitFor();
+                    Thread.sleep(500);
                 }
-            } catch (Exception ignored) {}
+            } catch (Exception e) {
+                System.err.println("cleanupReservedPorts 失败 (port=" + port + "): " + e.getMessage());
+            }
         }
     }
 

@@ -27,7 +27,7 @@ import java.util.List;
  */
 public class ReplayMain {
     private static final Logger log = LoggerFactory.getLogger(ReplayMain.class);
-    private static Jedis jedis;
+    private static redis.clients.jedis.JedisPool pool;
 
     public static void main(String[] args) throws Exception {
         ArgsParser argsParser = new ArgsParser(args);
@@ -38,8 +38,7 @@ public class ReplayMain {
         // 自动清理残留的旧 ReplayServer 进程，避免 BindException
         killPortOwner(httpPort);
 
-        var pool = new redis.clients.jedis.JedisPool(redisHost, redisPort);
-        jedis = pool.getResource();
+        pool = new redis.clients.jedis.JedisPool(redisHost, redisPort);
 
         HttpServer server = HttpServer.create(new InetSocketAddress(httpPort), 0);
         server.createContext("/api/replay/list", new ListHandler());
@@ -56,31 +55,42 @@ public class ReplayMain {
      * Windows 专用（依赖 netstat + taskkill）。
      */
     private static void killPortOwner(int port) {
+        boolean isWin = System.getProperty("os.name").toLowerCase().contains("win");
         try {
-            Process p = new ProcessBuilder("cmd", "/c",
-                    "netstat -ano | findstr :" + port + " | findstr LISTENING").start();
-            String out = new String(p.getInputStream().readAllBytes());
-            for (String line : out.split("\\r?\\n")) {
-                line = line.trim();
-                if (line.isEmpty()) continue;
-                String[] parts = line.split("\\s+");
-                String pid = parts[parts.length - 1];
-                if (pid.matches("\\d+")) {
-                    log.info("清理端口 {} 残留进程 PID={}", port, pid);
-                    Runtime.getRuntime().exec("taskkill /F /PID " + pid).waitFor();
-                    Thread.sleep(500);
-                    break;
+            if (isWin) {
+                Process p = new ProcessBuilder("cmd", "/c",
+                        "netstat -ano | findstr :" + port + " | findstr LISTENING").start();
+                String out = new String(p.getInputStream().readAllBytes());
+                for (String line : out.split("\\r?\\n")) {
+                    line = line.trim();
+                    if (line.isEmpty()) continue;
+                    String[] parts = line.split("\\s+");
+                    String pid = parts[parts.length - 1];
+                    if (pid.matches("\\d+")) {
+                        log.info("清理端口 {} 残留进程 PID={}", port, pid);
+                        Runtime.getRuntime().exec("taskkill /F /PID " + pid).waitFor();
+                        Thread.sleep(500);
+                        break;
+                    }
                 }
+            } else {
+                new ProcessBuilder("sh", "-c",
+                        "lsof -ti :" + port + " | xargs kill -9 2>/dev/null").start().waitFor();
+                Thread.sleep(500);
             }
-        } catch (Exception ignored) {}
+        } catch (Exception e) {
+            log.warn("清理端口 {} 失败: {}", port, e.getMessage());
+        }
     }
 
     static class ListHandler implements HttpHandler {
         public void handle(HttpExchange ex) throws IOException {
-            long len = jedis.llen("replay:snapshots");
-            List<Long> indices = new ArrayList<>();
-            for (long i = 0; i < len; i++) indices.add(i);
-            send(ex, 200, JSON.toJSONString(indices));
+            try (Jedis jedis = pool.getResource()) {
+                long len = jedis.llen("replay:snapshots");
+                List<Long> indices = new ArrayList<>();
+                for (long i = 0; i < len; i++) indices.add(i);
+                send(ex, 200, JSON.toJSONString(indices));
+            }
         }
     }
 
@@ -88,7 +98,7 @@ public class ReplayMain {
         public void handle(HttpExchange ex) throws IOException {
             String path = ex.getRequestURI().getPath();
             String idxStr = path.substring(path.lastIndexOf('/') + 1);
-            try {
+            try (Jedis jedis = pool.getResource()) {
                 int idx = Integer.parseInt(idxStr);
                 String json = jedis.lindex("replay:snapshots", idx);
                 if (json == null) { send(ex, 404, "{}"); return; }
@@ -99,8 +109,10 @@ public class ReplayMain {
 
     static class MetricsHandler implements HttpHandler {
         public void handle(HttpExchange ex) throws IOException {
-            List<String> data = jedis.lrange("analysis:metrics", -100, -1);
-            send(ex, 200, JSON.toJSONString(data));
+            try (Jedis jedis = pool.getResource()) {
+                List<String> data = jedis.lrange("analysis:metrics", -100, -1);
+                send(ex, 200, JSON.toJSONString(data));
+            }
         }
     }
 
@@ -114,13 +126,15 @@ public class ReplayMain {
                     else if (p.startsWith("to=")) to = Integer.parseInt(p.substring(3));
                 }
             }
-            java.util.List<String> result = new java.util.ArrayList<>();
-            for (int i = from; i <= to && i < 100000; i++) {
-                String json = jedis.lindex("replay:snapshots", i);
-                if (json == null) break;
-                result.add(json);
+            try (Jedis jedis = pool.getResource()) {
+                java.util.List<String> result = new java.util.ArrayList<>();
+                for (int i = from; i <= to && i < 100000; i++) {
+                    String json = jedis.lindex("replay:snapshots", i);
+                    if (json == null) break;
+                    result.add(json);
+                }
+                send(ex, 200, JSON.toJSONString(result));
             }
-            send(ex, 200, JSON.toJSONString(result));
         }
     }
 

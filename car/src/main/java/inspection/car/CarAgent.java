@@ -61,18 +61,25 @@ public class CarAgent {
             return;
         }
 
-        // 不加分布式锁——Navigator 已移除锁，小车自己不需要锁自己
         Point next = bb.peekNextStep(carId);
-            if (next == null) {
-                log.info("[Car:{}] 📭 peekNextStep=null, 路径走完", carId);
-                handleRouteDone();
-                return;
-            }
+        if (next == null) {
+            log.info("[Car:{}] 📭 peekNextStep=null, 路径走完", carId);
+            handleRouteDone();
+            return;
+        }
 
-            log.info("[Car:{}] 🔍 peekNextStep=({},{}), isBlocked? {}", carId, next.x, next.y, bb.isBlocked(next.x, next.y));
+        log.info("[Car:{}] 🔍 peekNextStep=({},{}), isBlocked? {}", carId, next.x, next.y, bb.isBlocked(next.x, next.y));
 
+        // 对目标格子加锁，防止两车同时抢占同一格子
+        inspection.common.client.DistributedLock cellLock = bb.getCellLock(next.x, next.y);
+        if (!cellLock.tryLock(200)) {
+            log.warn("[Car:{}] 目标格子({},{})被另一辆车锁定，跳过本 tick", carId, next.x, next.y);
+            return;
+        }
+        try {
+            // 锁后复验：加锁期间可能有车释放了旧格子的阻挡
             if (bb.isBlocked(next.x, next.y)) {
-                log.warn("[Car:{}] 🧱 下一步({},{})被阻塞!", carId, next.x, next.y);
+                log.warn("[Car:{}] 目标格子({},{})已被占据（锁后复验失败）", carId, next.x, next.y);
                 handleBlocked();
                 return;
             }
@@ -88,6 +95,11 @@ public class CarAgent {
             obstacleManager.setObstacle(next);
             log.info("[Car:{}] 💡 illuminate({},{})", carId, next.x, next.y);
             bb.incrementCarSteps(carId);
+
+            // 成功移动后重置连续阻塞计数
+            if (bb.getConsecutiveBlocked(carId) > 0) {
+                bb.resetConsecutiveBlocked(carId);
+            }
 
             // 移动 + 点亮后立即触发 Display 刷新（消除 500ms 广播延迟）
             triggerImmediateRefresh();
@@ -108,11 +120,14 @@ public class CarAgent {
                 handleRouteDone();
                 log.info("[Car:{}] 移动至 ({},{}) 后路径走完", carId, next.x, next.y);
             }
+        } finally {
+            cellLock.unlock();
+        }
     }
 
     private void handleBlocked() {
         bb.setCarStatus(carId, CarStatus.BLOCKED);
-        bb.setBlockedTick(carId, currentTick.get());
+        bb.setBlockedTick(carId, System.currentTimeMillis());
         // 遇阻后清空路径并立即请求重新规划，避免一直 peekNextStep 返回被阻点
         bb.clearRoute(carId);
         bb.pushTask("BLOCKED", carId, java.util.Map.of("blockedTick", String.valueOf(currentTick.get())));
