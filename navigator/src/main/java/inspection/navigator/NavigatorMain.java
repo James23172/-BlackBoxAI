@@ -200,19 +200,45 @@ public class NavigatorMain {
         int w = blackboard.getMapWidth();
         int h = blackboard.getMapHeight();
 
-        // 扫描周围 5×5 区域，检查是否有该车可达的未探索格子
-        int scanRadius = 5;
+        // BFS: 完整遍历所有可达区域
         boolean hasReachableUnexplored = false;
         if (carPos != null) {
-            for (int dy = -scanRadius; dy <= scanRadius && !hasReachableUnexplored; dy++) {
-                for (int dx = -scanRadius; dx <= scanRadius && !hasReachableUnexplored; dx++) {
-                    int nx = carPos.x + dx;
-                    int ny = carPos.y + dy;
+            boolean[][] visited = new boolean[h][w];
+            Queue<Point> queue = new ArrayDeque<>();
+            queue.add(carPos);
+            visited[carPos.y][carPos.x] = true;
+
+            while (!queue.isEmpty()) {
+                Point cur = queue.poll();
+                if (!blackboard.isBlocked(cur.x, cur.y)
+                        && !blackboard.isExplored(cur.x, cur.y)
+                        && !blackboard.isCarUnreachable(carId, cur.x, cur.y)) {
+                    hasReachableUnexplored = true;
+                }
+                int[][] dirs = {{0,1},{0,-1},{1,0},{-1,0}};
+                for (int[] d : dirs) {
+                    int nx = cur.x + d[0], ny = cur.y + d[1];
                     if (nx >= 0 && nx < w && ny >= 0 && ny < h
-                            && !blackboard.isBlocked(nx, ny)
-                            && !blackboard.isExplored(nx, ny)
-                            && !blackboard.isCarUnreachable(carId, nx, ny)) {
-                        hasReachableUnexplored = true;
+                            && !visited[ny][nx]
+                            && !blackboard.isBlocked(nx, ny)) {
+                        visited[ny][nx] = true;
+                        queue.add(new Point(nx, ny));
+                    }
+                }
+            }
+
+            // 标记不可达格: 全图扫描, 未探索+非阻塞+不在BFS可达区 → 本车不可达
+            // 纯内存遍历, 无 Redis 调用, TargetPlanner 后续跳过这些格
+            if (hasReachableUnexplored) {
+                boolean[][] explored = blackboard.getMapView();
+                for (int y = 0; y < h; y++) {
+                    for (int x = 0; x < w; x++) {
+                        if (!visited[y][x]
+                                && !explored[y][x]
+                                && !blackboard.isBlocked(x, y)
+                                && !blackboard.isCarUnreachable(carId, x, y)) {
+                            blackboard.setCarUnreachable(carId, x, y);
+                        }
                     }
                 }
             }

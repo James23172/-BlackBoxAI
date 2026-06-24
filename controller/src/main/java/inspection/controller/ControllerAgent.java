@@ -317,6 +317,15 @@ public class ControllerAgent {
                     log.info("⏹ 探索完成，自动停止录制");
                     wakeTaskProcessor();
                 }
+                // BFS 收敛判定: 所有车 IDLE + 无目标 + 不在冷却 → BFS 确认不可达 → 完成
+                else if (unexploredCount > 0 && checkConvergenceCompletion()) {
+                    log.info("🏁 巡检完成！所有车 IDLE 且剩余未探索格均不可达");
+                    taskActive = false;
+                    bb.setTaskActive(false);
+                    recording = false;
+                    log.info("⏹ 探索完成，自动停止录制");
+                    wakeTaskProcessor();
+                }
                 fallbackBlockedCheck();
                 // 每 tick 主动推进所有 IDLE 且有路径的小车（每个 tick 最多 1 步）
                 // 全局暂停时跳过 tickDrive，但仍继续广播（让 Display 看到暂停状态）
@@ -343,6 +352,11 @@ public class ControllerAgent {
         try { blockedTick = bb.getCarBlockedTick(carId); } catch (Exception e) { blockedTick = 0; }
         long diff = tickCount - blockedTick;
         if (diff >= ConfigConstants.BLOCKED_TIMEOUT_TICKS) {
+            // 复活前 BFS 检查: 真的不可达就保持 BLOCKED, 避免永久循环
+            if (!bfsCanReachUnexplored(bb.getCarPosition(carId))) {
+                log.info("小车 {} 阻塞超时但 BFS 确认不可达, 保持 BLOCKED", carId);
+                return;
+            }
             log.info("小车 {} 已阻塞 {} 个节拍，清空路径/目标，转为 IDLE", carId, diff);
             DistributedLock lock = bb.getCarLock(carId);
             if (!lock.tryLock()) {
@@ -358,6 +372,32 @@ public class ControllerAgent {
                 lock.unlock();
             }
         }
+    }
+
+    /** BFS 从给定位置出发, 检查能否到达任何未探索格 */
+    private boolean bfsCanReachUnexplored(Point startPos) {
+        if (startPos == null) return false;
+        int w = bb.getMapWidth();
+        int h = bb.getMapHeight();
+        boolean[][] blocked = bb.getMapBlocked();
+        boolean[][] visited = new boolean[h][w];
+        Queue<Point> queue = new ArrayDeque<>();
+        queue.add(startPos);
+        visited[startPos.y][startPos.x] = true;
+        while (!queue.isEmpty()) {
+            Point cur = queue.poll();
+            if (!blocked[cur.y][cur.x] && !bb.isExplored(cur.x, cur.y)) return true;
+            int[][] dirs = {{0,1},{0,-1},{1,0},{-1,0}};
+            for (int[] d : dirs) {
+                int nx = cur.x + d[0], ny = cur.y + d[1];
+                if (nx >= 0 && nx < w && ny >= 0 && ny < h
+                        && !visited[ny][nx] && !blocked[ny][nx]) {
+                    visited[ny][nx] = true;
+                    queue.add(new Point(nx, ny));
+                }
+            }
+        }
+        return false;
     }
 
     private void fallbackBlockedCheck() {
@@ -523,5 +563,35 @@ public class ControllerAgent {
 
     private long getUnexploredCount() {
         try { return bb.getUnexploredCount(); } catch (Exception e) { return Long.MAX_VALUE; }
+    }
+
+    // ==================== 收敛判定 ====================
+
+    /**
+     * 检查是否所有车都已经停滞（IDLE/BLOCKED + 无目标 + 不在冷却），
+     * 并且从每辆车出发 BFS 都无法到达任何未探索格子。
+     * 如果满足 → 返回 true，触发全局完成。
+     */
+    private boolean checkConvergenceCompletion() {
+        List<String> carIds;
+        try { carIds = bb.getAllCarIds(); } catch (Exception e) { return false; }
+        if (carIds.isEmpty()) return false;
+
+        // 条件1: 所有车 ∈ {IDLE, BLOCKED} + 无目标 + 不在冷却期
+        for (String id : carIds) {
+            try {
+                CarStatus st = bb.getCarStatus(id);
+                if (st != CarStatus.IDLE && st != CarStatus.BLOCKED) return false;
+                if (bb.getCarTarget(id) != null) return false;
+                if (bb.isCarBlockedUntil(id)) return false;
+            } catch (Exception e) { return false; }
+        }
+
+        // 条件2: 从每辆车各自做 BFS, 任一辆能找到未探索格就还没完成
+        for (String id : carIds) {
+            if (bfsCanReachUnexplored(bb.getCarPosition(id))) return false;
+        }
+        // 全部不可达 → 收敛完成
+        return true;
     }
 }

@@ -201,18 +201,25 @@ public class BlackboardClient {
         }
     }
 
-    /** 3x3 点亮：Pipeline 批量写入，保证原子性（不再清除不可达标记，不可达是车级别概念） */
+    /** 3x3 点亮: 对角邻接阻断规则 + 一次性读取障碍物到内存, 避免 17 次 Redis GETBIT */
     public void illuminateArea(int cx, int cy) {
         refreshMapConfig();
         int r = ConfigConstants.ILLUMINATE_RADIUS;
+        // 一次性读障碍物到内存(有版本号缓存, 命中率极高)
+        boolean[][] blocked = getMapBlocked();
         try (Jedis jedis = pool.getResource()) {
             var pipeline = jedis.pipelined();
             for (int dy = -r; dy <= r; dy++) {
                 for (int dx = -r; dx <= r; dx++) {
                     int nx = cx + dx;
                     int ny = cy + dy;
-                    if (nx >= 0 && nx < mapWidth && ny >= 0 && ny < mapHeight
-                            && !isBlocked(nx, ny)) {
+                    if (nx < 0 || nx >= mapWidth || ny < 0 || ny >= mapHeight)
+                        continue;
+                    // 对角格: 两个相邻正方向必须都通畅
+                    if (dx != 0 && dy != 0) {
+                        if (blocked[cy][cx + dx] || blocked[cy + dy][cx]) continue;
+                    }
+                    if (!blocked[ny][nx]) {
                         pipeline.setbit(ConfigConstants.KEY_MAP_VIEW, bitmapOffset(nx, ny), true);
                         pipeline.srem(ConfigConstants.KEY_UNEXPLORED_SET, nx + "," + ny);
                     }
