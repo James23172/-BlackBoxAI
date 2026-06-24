@@ -11,7 +11,7 @@ public class SimulationState {
     public int mapWidth;
     public int mapHeight;
     public List<Point> obstacles;              // 障碍物坐标列表
-    public List<CarState> cars;                // 所有小车状态
+    public List<CarState> cars;                // 所有小车状态（含各自 unreachable）
     public double exploredRate;                // 探索率 0.0 ~ 1.0
     public boolean taskActive;                 // 任务是否激活
     public long tick;                          // 当前节拍号

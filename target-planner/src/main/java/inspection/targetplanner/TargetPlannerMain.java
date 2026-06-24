@@ -145,11 +145,15 @@ public class TargetPlannerMain {
         blackboard.invalidateBitmapCache();
         boolean[][] explored = blackboard.getMapView();
 
-        // 1. 扫描所有未探索的格子 → 候选池（排除障碍物）
+        // 1. 扫描所有未探索的格子 → 候选池（排除障碍物 + 该车不可达）
+        //    每车独立不可达 bitmap：A 车不可达的格子 B 车仍可尝试
+        //    过滤 isCarUnreachable(carId) 确保该车不会被分配到它已知不可达的目标
         List<Point> candidates = new ArrayList<>();
         for (int y = 0; y < h; y++)
             for (int x = 0; x < w; x++)
-                if (!explored[y][x] && !blackboard.isBlocked(x, y))
+                if (!explored[y][x]
+                        && !blackboard.isBlocked(x, y)
+                        && !blackboard.isCarUnreachable(carId, x, y))
                     candidates.add(new Point(x, y));
 
         if (candidates.isEmpty()) return null;

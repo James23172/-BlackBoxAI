@@ -179,22 +179,28 @@ public class NavigatorMain {
     }
 
     /**
-     * 路径规划失败：智能判断是否真的无解
-     * - 周围有可达未探索区域 → 冷却 3 秒后重试
-     * - 周围无可达未探索区域 → 进入 BLOCKED 状态，停止蔓延
+     * 路径规划失败：记录本车不可达标记，智能判断是否重试。
+     *
+     * 每车独立不可达 bitmap 策略：
+     *   - 标记目标格对当前车不可达（car:{carId}:unreachable）
+     *   - TargetPlanner 分配目标时会排除该车的不可达格子
+     *   - 其他车不受影响，仍可尝试到达该格子
+     *   - 周围有可达未探索区域 → 冷却后重试
+     *   - 周围无可达未探索区域 → 进入 BLOCKED，停止重试
      */
     private void handleNavigateFailed(String carId) {
         Point unreachable = blackboard.getCarTarget(carId);
         if (unreachable != null) {
-            blackboard.setMapViewBit(unreachable.x, unreachable.y);
-            LOG.info("标记不可达目标为已尝试: carId={}, target=({},{})", carId, unreachable.x, unreachable.y);
+            // 标记该格对本车不可达（不影响其他车）
+            blackboard.setCarUnreachable(carId, unreachable.x, unreachable.y);
+            LOG.info("标记不可达: carId={}, target=({},{})", carId, unreachable.x, unreachable.y);
         }
 
         Point carPos = blackboard.getCarPosition(carId);
         int w = blackboard.getMapWidth();
         int h = blackboard.getMapHeight();
 
-        // 扫描周围 5×5 区域，检查是否有可达的未探索格子
+        // 扫描周围 5×5 区域，检查是否有该车可达的未探索格子
         int scanRadius = 5;
         boolean hasReachableUnexplored = false;
         if (carPos != null) {
@@ -204,7 +210,8 @@ public class NavigatorMain {
                     int ny = carPos.y + dy;
                     if (nx >= 0 && nx < w && ny >= 0 && ny < h
                             && !blackboard.isBlocked(nx, ny)
-                            && !blackboard.isExplored(nx, ny)) {
+                            && !blackboard.isExplored(nx, ny)
+                            && !blackboard.isCarUnreachable(carId, nx, ny)) {
                         hasReachableUnexplored = true;
                     }
                 }

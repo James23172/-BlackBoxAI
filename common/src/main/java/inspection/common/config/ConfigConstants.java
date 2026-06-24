@@ -40,6 +40,8 @@ public final class ConfigConstants {
     public static final String KEY_MAP_VIEW = "map:view";
     /** 地图障碍物 bitmap key */
     public static final String KEY_MAP_BLOCKED = "map:blocked";
+    /** 小车独立不可达 bitmap key: car:{carId}:unreachable */
+    public static final String KEY_CAR_UNREACHABLE = "car:%s:unreachable";
     /** 小车状态 key: car:{carId}:status */
     public static final String KEY_CAR_STATUS = "car:%s:status";
     /** 小车位置 key: car:{carId}:position */
@@ -121,6 +123,10 @@ public final class ConfigConstants {
 
     public static String carBlockedUntilKey(String carId) {
         return String.format(KEY_CAR_BLOCKED_UNTIL, carId);
+    }
+
+    public static String carUnreachableKey(String carId) {
+        return String.format(KEY_CAR_UNREACHABLE, carId);
     }
 
     public static String carQueueName(String carId) {

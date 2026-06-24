@@ -183,7 +183,7 @@ public class BlackboardClient {
         return decodeBitmap(cachedMapViewBytes, mapWidth, mapHeight);
     }
 
-    /** 设置地图某位的探索状态 */
+    /** 设置地图某位的探索状态（不清除任何车的不可达标记，不可达是车级别概念） */
     public void setMapViewBit(int x, int y) {
         try (Jedis jedis = pool.getResource()) {
             jedis.setbit(ConfigConstants.KEY_MAP_VIEW, bitmapOffset(x, y), true);
@@ -201,7 +201,7 @@ public class BlackboardClient {
         }
     }
 
-    /** 3x3 点亮：Pipeline 批量写入，保证原子性 */
+    /** 3x3 点亮：Pipeline 批量写入，保证原子性（不再清除不可达标记，不可达是车级别概念） */
     public void illuminateArea(int cx, int cy) {
         refreshMapConfig();
         int r = ConfigConstants.ILLUMINATE_RADIUS;
@@ -232,6 +232,46 @@ public class BlackboardClient {
         refreshMapConfig();
         try (Jedis jedis = pool.getResource()) {
             return jedis.getbit(ConfigConstants.KEY_MAP_BLOCKED, bitmapOffset(x, y));
+        }
+    }
+
+    // ------ 小车独立不可达 bitmap（每车独立维护） ------
+
+    /** 标记某格对指定小车不可达 */
+    public void setCarUnreachable(String carId, int x, int y) {
+        refreshMapConfig();
+        try (Jedis jedis = pool.getResource()) {
+            jedis.setbit(ConfigConstants.carUnreachableKey(carId), bitmapOffset(x, y), true);
+        }
+    }
+
+    /** 检查某格对指定小车是否不可达 */
+    public boolean isCarUnreachable(String carId, int x, int y) {
+        refreshMapConfig();
+        try (Jedis jedis = pool.getResource()) {
+            return jedis.getbit(ConfigConstants.carUnreachableKey(carId), bitmapOffset(x, y));
+        }
+    }
+
+    /** 读取指定小车的不可达 bitmap，不存在时返回全 false */
+    public boolean[][] getCarUnreachableBitmap(String carId) {
+        refreshMapConfig();
+        try (Jedis jedis = pool.getResource()) {
+            String key = ConfigConstants.carUnreachableKey(carId);
+            if (!jedis.exists(key)) return new boolean[mapHeight][mapWidth];
+            boolean[][] bitmap = new boolean[mapHeight][mapWidth];
+            for (int y = 0; y < mapHeight; y++)
+                for (int x = 0; x < mapWidth; x++)
+                    bitmap[y][x] = jedis.getbit(key, bitmapOffset(x, y));
+            return bitmap;
+        }
+    }
+
+    /** 清除指定小车的不可达标记（取消特定格子对特定车的"不可达"判定） */
+    public void clearCarUnreachable(String carId, int x, int y) {
+        refreshMapConfig();
+        try (Jedis jedis = pool.getResource()) {
+            jedis.setbit(ConfigConstants.carUnreachableKey(carId), bitmapOffset(x, y), false);
         }
     }
 

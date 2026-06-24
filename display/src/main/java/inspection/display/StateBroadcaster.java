@@ -77,6 +77,7 @@ public class StateBroadcaster {
             cs.setSteps(blackboard.getCarSteps(carId));
             cs.setBlockedTick(blackboard.getBlockedTick(carId));
             cs.setOwner(blackboard.getCarOwner(carId));
+            cs.setUnreachable(blackboard.getCarUnreachableBitmap(carId));
             carStates.add(cs);
         }
 
