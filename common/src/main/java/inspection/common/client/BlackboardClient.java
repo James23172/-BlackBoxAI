@@ -809,6 +809,16 @@ public class BlackboardClient {
         }
     }
 
+    /** 判断指定小车是否因其 owner 被操作员暂停而需要停止 */
+    public boolean isCarPausedByOwner(String carId) {
+        try (Jedis jedis = pool.getResource()) {
+            String owner = jedis.get("car:" + carId + ":owner");
+            if (owner == null)
+                return false;
+            return jedis.exists("pause:operator:" + owner);
+        }
+    }
+
     /** 关闭连接池 */
     public void close() {
         if (pool != null && !pool.isClosed()) {

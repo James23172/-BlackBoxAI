@@ -380,7 +380,7 @@ public class CommandReceiver extends WebSocketServer {
             ConnState state = connStates.get(conn);
             state.username = verifyResp.getString("username");
             state.role = verifyResp.getString("role");
-            state.machineId = machineId;
+            state.machineId = state.username; // 每个连接独立：用用户名作为 machineId
 
             // 推送当前状态给新连接（避免白屏等待下一次 REFRESH_ALL）
             if (stateBroadcaster != null) {
@@ -390,7 +390,7 @@ public class CommandReceiver extends WebSocketServer {
             // 回复 AUTH_OK，告知前端 machine
             com.alibaba.fastjson2.JSONObject ok = new com.alibaba.fastjson2.JSONObject();
             ok.put("type", "AUTH_OK");
-            ok.put("machine", machineId);
+            ok.put("machine", state.machineId);
             conn.send(ok.toJSONString());
 
             LOG.info("认证成功: username={}, role={}, machineId={}",

@@ -167,6 +167,7 @@ public class TaskConfiguratorMain {
             blackboard.setCarPosition(carId, spawn.x, spawn.y);
             blackboard.setCarStatus(carId, CarStatus.IDLE);
             blackboard.setCarSteps(carId, 0);
+            blackboard.setCarOwner(carId, "system"); // 默认小车归属 system，仅受全局暂停控制
             // 点亮出生点及其周围 3×3 区域（避免出生点被视为"未探索"目标）
             blackboard.illuminateArea(spawn.x, spawn.y);
             LOG.info("已初始化小车: carId={}, position=({},{})", carId, spawn.x, spawn.y);

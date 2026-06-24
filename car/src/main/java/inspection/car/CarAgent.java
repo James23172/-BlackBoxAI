@@ -49,6 +49,12 @@ public class CarAgent {
                 carId, tick, status,
                 curPos.x, curPos.y);
 
+        // 全局暂停或当前车所属操作员被暂停时，跳过本次移动
+        if (bb.isGlobalPaused() || bb.isCarPausedByOwner(carId)) {
+            log.info("[Car:{}] 暂停中（全局或车主操作员），跳过移动", carId);
+            return;
+        }
+
         // 不加分布式锁——Navigator 已移除锁，小车自己不需要锁自己
         Point next = bb.peekNextStep(carId);
             if (next == null) {
