@@ -14,12 +14,16 @@ public class CarState {
     public int steps;
     public long blockedTick;
     public String owner;                        // 归属 machineId (主/B/C/D/E)
+    public boolean[][] unreachable;             // 该车独立不可达 bitmap（紫色显示）
 
     public CarState() {}
 
     public CarState(String carId) {
         this.carId = carId;
     }
+
+    public boolean[][] getUnreachable() { return unreachable; }
+    public void setUnreachable(boolean[][] unreachable) { this.unreachable = unreachable; }
 
     public String getCarId() { return carId; }
     public void setCarId(String carId) { this.carId = carId; }

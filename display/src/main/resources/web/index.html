@@ -431,6 +431,7 @@ function legendHtml() { return '<div class="legend-inline">' +
     '<div class="legend-chip"><span class="legend-dot" style="background:#1a2436"></span>未探索</div>' +
     '<div class="legend-chip"><span class="legend-dot" style="background:#1e4d3a"></span>已探索</div>' +
     '<div class="legend-chip"><span class="legend-dot" style="background:#5c3d2e"></span>障碍物</div>' +
+    '<div class="legend-chip"><span class="legend-dot" style="background:#6b21a8"></span>选中车不可达</div>' +
     '<div class="legend-chip"><span class="legend-dot" style="background:#2196F3"></span>空闲</div>' +
     '<div class="legend-chip"><span class="legend-dot" style="background:#8BC34A"></span>移动中</div>' +
     '<div class="legend-chip"><span class="legend-dot" style="background:#F44336"></span>阻塞</div></div>'; }
@@ -539,10 +540,11 @@ function selectCarFromTable(id) { selectedCarId = id; render(currentState); }
 //  RENDER (Double-buffered canvas + incremental table)
 // ====================================================================
 var _colCache = {};
-function getColor(cell, x, y, obstacles) {
+function getColor(cell, x, y, obstacles, unreachable) {
     var k = x+','+y;
     if (obstacles[k]) return '#5c3d2e';
-    if (cell) return '#1e4d3a';
+    if (cell) return '#1e4d3a'; // explored overrides unreachable
+    if (unreachable && unreachable[k]) return '#6b21a8'; // selected car's unreachable
     return '#1a2436';
 }
 
@@ -558,8 +560,20 @@ function render(state) {
     var canvas = document.getElementById('gridCanvas');
 
     var obs = {}; (state.obstacles||[]).forEach(function(p){obs[p.x+','+p.y]=true});
-    var unreach = state.unreachable || [];
-    var cand = state.unreachableCandidates || [];
+    // 构建选中车的不可达集合（选中车切换时自动更新）
+    var unr = null;
+    if (selectedCarId) {
+        var selCar = (state.cars||[]).find(function(c){return c.carId === selectedCarId});
+        if (selCar && selCar.unreachable) {
+            unr = {};
+            for (var uy = 0; uy < selCar.unreachable.length; uy++) {
+                var row = selCar.unreachable[uy];
+                if (!row) continue;
+                for (var ux = 0; ux < row.length; ux++)
+                    if (row[ux]) unr[ux+','+uy] = true;
+            }
+        }
+    }
 
     // Double buffer
     var off = document.createElement('canvas'); off.width = W; off.height = H;
@@ -569,17 +583,8 @@ function render(state) {
     canvas.width = W; canvas.height = H;
     for (var y = 0; y < rows; y++)
         for (var x = 0; x < cols; x++) {
-            var color = '#1a2436';
-            if (obs[x+','+y]) {
-                color = '#5c3d2e';
-            } else if (unreach[y] && unreach[y][x]) {
-                color = '#7f1d1d';
-            } else if (cand[y] && cand[y][x]) {
-                color = '#5b3d7a';
-            } else if (state.mapView[y] && state.mapView[y][x]) {
-                color = '#1e4d3a';
-            }
-            c.fillStyle = color;
+            // Priority: obstacles > explored (覆盖不可达区域) > unreachable > unexplored
+            c.fillStyle = obs[x+','+y] ? '#5c3d2e' : (state.mapView[y]&&state.mapView[y][x] ? '#1e4d3a' : (unr && unr[x+','+y] ? '#6b21a8' : '#1a2436'));
             c.fillRect(x*cellSize, y*cellSize, cellSize-1, cellSize-1);
         }
     _lastFullMap = state.mapView;
@@ -873,18 +878,6 @@ function replayRender(idx) {
             }
         }
     }
-    // 从 unreachableBits 恢复不可达区域
-    if (snap.unreachableBits) {
-        snap.unreachable = [];
-        for (var y = 0; y < (snap.mapHeight||40); y++) {
-            var row = [];
-            for (var x = 0; x < (snap.mapWidth||40); x++) {
-                row.push(snap.unreachableBits[y*snap.mapWidth + x] === '1');
-            }
-            snap.unreachable.push(row);
-        }
-    } else { snap.unreachable = []; }
-    snap.unreachableCandidates = [];
     // 补充 render() 需要的字段
     if (!snap.cars) snap.cars = [];
     if (!snap.globalPaused) snap.globalPaused = false;

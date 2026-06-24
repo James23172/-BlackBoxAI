@@ -13,7 +13,7 @@ public class SimulationState {
     public boolean[][] unreachable;            // 确认不可达
     public boolean[][] unreachableCandidates;  // 候选不可达
     public List<Point> obstacles;              // 障碍物坐标列表
-    public List<CarState> cars;                // 所有小车状态
+    public List<CarState> cars;                // 所有小车状态（含各自 unreachable）
     public double exploredRate;                // 探索率 0.0 ~ 1.0
     public boolean taskActive;                 // 任务是否激活
     public long tick;                          // 当前节拍号
