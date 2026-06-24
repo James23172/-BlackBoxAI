@@ -96,19 +96,37 @@ public class TaskConfiguratorMain {
         boolean addCar = data.getBooleanValue("addCar", false);
         if (addCar) {
             String carId = data.getString("addCarId");
-            int cx = data.getIntValue("x", ConfigConstants.DEFAULT_MAP_WIDTH / 2);
-            int cy = data.getIntValue("y", ConfigConstants.DEFAULT_MAP_HEIGHT / 2);
-            if (carId != null && !carId.isEmpty()) {
-                blackboard.addCar(carId, cx, cy);
-                String machine = data.getString("machine");
-                if (machine != null && !machine.isEmpty()) {
-                    blackboard.setCarOwner(carId, machine);
-                }
-                try { messageBus.getChannel().queueDeclare(
-                        ConfigConstants.carQueueName(carId), true, false, false, null);
-                } catch (IOException e) { LOG.error("声明 {} 队列失败", carId, e); }
-                LOG.info("增量添加小车完成: carId={}, position=({},{})", carId, cx, cy);
+            if (carId == null || carId.isEmpty()) return;
+
+            // 使用实际地图尺寸，而非写死的 40x40 常量
+            int mapW = blackboard.getMapWidth();
+            int mapH = blackboard.getMapHeight();
+            int cx = data.getIntValue("x", mapW / 2);
+            int cy = data.getIntValue("y", mapH / 2);
+
+            // 越界则回落到地图中心
+            if (cx < 0 || cx >= mapW || cy < 0 || cy >= mapH) {
+                cx = mapW / 2;
+                cy = mapH / 2;
             }
+
+            // 避障：若目标位置被占，螺旋搜索最近空地
+            Point safe = findNearestFree(cx, cy, mapW, mapH);
+            if (safe != null) { cx = safe.x; cy = safe.y; }
+
+            blackboard.addCar(carId, cx, cy);
+            // 先点亮再阻塞 — 顺序不可颠倒
+            blackboard.illuminateArea(cx, cy);
+            blackboard.setBlocked(cx, cy);
+
+            String machine = data.getString("machine");
+            if (machine != null && !machine.isEmpty()) {
+                blackboard.setCarOwner(carId, machine);
+            }
+            try { messageBus.getChannel().queueDeclare(
+                    ConfigConstants.carQueueName(carId), true, false, false, null);
+            } catch (IOException e) { LOG.error("声明 {} 队列失败", carId, e); }
+            LOG.info("增量添加小车完成: carId={}, position=({},{})", carId, cx, cy);
             return;
         }
 
@@ -164,12 +182,16 @@ public class TaskConfiguratorMain {
             String carId = String.format("Car%03d", i);
             carIds.add(carId);
             Point spawn = spawnPoints.get(i - 1);
+            // 防边界障碍物：若出生点被占，螺旋搜索最近空地
+            Point safe = findNearestFree(spawn.x, spawn.y, mapWidth, mapHeight);
+            if (safe != null) { spawn = safe; }
             blackboard.setCarPosition(carId, spawn.x, spawn.y);
             blackboard.setCarStatus(carId, CarStatus.IDLE);
             blackboard.setCarSteps(carId, 0);
             blackboard.setCarOwner(carId, "system"); // 默认小车归属 system，仅受全局暂停控制
-            // 点亮出生点及其周围 3×3 区域（避免出生点被视为"未探索"目标）
+            // 先点亮再阻塞 — 顺序不可颠倒，否则 illuminateArea 会跳过脚下格子
             blackboard.illuminateArea(spawn.x, spawn.y);
+            blackboard.setBlocked(spawn.x, spawn.y);
             LOG.info("已初始化小车: carId={}, position=({},{})", carId, spawn.x, spawn.y);
         }
 
@@ -258,6 +280,37 @@ public class TaskConfiguratorMain {
         }
         LOG.info("禁区集合: {} 个出生点, {} 个禁止放置格", spawnPoints.size(), forbidden.size());
         return forbidden;
+    }
+
+    /**
+     * 从指定坐标螺旋向外搜索最近的非阻塞空地，避开障碍物和已有车辆。
+     */
+    private Point findNearestFree(int startX, int startY, int mapW, int mapH) {
+        if (!blackboard.isBlocked(startX, startY) && !isOccupiedByCar(startX, startY)) {
+            return new Point(startX, startY);
+        }
+        int maxRadius = Math.max(mapW, mapH);
+        for (int r = 1; r <= maxRadius; r++) {
+            for (int dx = -r; dx <= r; dx++) {
+                for (int dy = -r; dy <= r; dy++) {
+                    if (Math.max(Math.abs(dx), Math.abs(dy)) != r) continue;
+                    int nx = startX + dx, ny = startY + dy;
+                    if (nx < 0 || nx >= mapW || ny < 0 || ny >= mapH) continue;
+                    if (!blackboard.isBlocked(nx, ny) && !isOccupiedByCar(nx, ny)) {
+                        return new Point(nx, ny);
+                    }
+                }
+            }
+        }
+        return null;
+    }
+
+    private boolean isOccupiedByCar(int x, int y) {
+        for (String carId : blackboard.getAllCarIds()) {
+            Point p = blackboard.getCarPosition(carId);
+            if (p != null && p.x == x && p.y == y) return true;
+        }
+        return false;
     }
 
     private int generateObstacles(int mapWidth, int mapHeight, double obstacleDensity, Set<Point> forbidden) {

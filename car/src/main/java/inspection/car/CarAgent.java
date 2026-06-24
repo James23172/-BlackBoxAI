@@ -83,8 +83,9 @@ public class CarAgent {
             bb.popNextStep(carId);
             obstacleManager.clearObstacle(oldPos);
             bb.setCarPosition(carId, next.x, next.y);
-
+            // 先点亮再标记阻塞，防止其他车踩踏
             illuminator.illuminate(next.x, next.y);
+            obstacleManager.setObstacle(next);
             log.info("[Car:{}] 💡 illuminate({},{})", carId, next.x, next.y);
             bb.incrementCarSteps(carId);
 
